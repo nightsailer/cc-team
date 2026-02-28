@@ -24,6 +24,7 @@ from cc_team.inbox_poller import InboxPoller
 from cc_team.message_builder import MessageBuilder
 from cc_team.task_manager import TaskManager
 from cc_team.team_manager import TeamManager
+from cc_team.tmux import ClearMode, PaneState
 from cc_team.types import (
     AGENT_COLORS,
     AgentColor,
@@ -59,6 +60,8 @@ __all__ = [
     "SpawnAgentOptions",
     "ControllerOptions",
     "AgentController",
+    "ClearMode",
+    "PaneState",
     # Literals
     "TaskStatus",
     "PermissionMode",

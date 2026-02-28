@@ -51,11 +51,16 @@ def _require_team(args: argparse.Namespace) -> str:
 
 
 async def _cmd_team_create(args: argparse.Namespace) -> None:
+    from cc_team.exceptions import TeamAlreadyExistsError
     from cc_team.team_manager import TeamManager
 
     name = args.name or _require_team(args)
     mgr = TeamManager(name)
-    config = await mgr.create(description=args.description)
+    try:
+        config = await mgr.create(description=args.description)
+    except TeamAlreadyExistsError:
+        _error(f"Team '{name}' already exists. Destroy it first or use a different name.")
+        sys.exit(1)
     if args.use_json:
         from cc_team._serialization import team_config_to_dict
         _json_out(team_config_to_dict(config))

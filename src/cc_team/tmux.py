@@ -1,21 +1,29 @@
-"""tmux 操作封装。
+"""Tmux operation wrapper for Claude Code multi-agent orchestration.
 
-封装 Claude Code 原生使用的 tmux 操作:
-- split-window: 创建新 pane
-- send-keys: 发送命令（短文本）
-- load-buffer + paste-buffer: 发送长命令
-- kill-pane: 销毁 pane
-- capture-pane: 捕获输出
-- list-panes: 检查 pane 存活
+Encapsulates tmux operations used by Claude Code:
+- split-window: Create new pane
+- send-keys / load-buffer + paste-buffer: Send commands (short/long text)
+- kill-pane: Destroy pane
+- capture-pane: Capture output
+- display-message: Query pane properties, verify liveness, notifications
+- PaneState detection: Detect pane activity via regex matching
+- send_enter_with_retry: Reliable Enter key delivery with verification
 
-可测试性: 接受 runner 注入，CI 中用 mock 替代真实 tmux。
+Key reliability features (backported from tmux_helper.py):
+- C-m instead of "Enter" to avoid zsh vi-mode issues
+- Named buffer + delete-buffer safety net to prevent buffer leaks
+- Strict pane ID validation via _PANE_ID_RE regex
+
+Testability: accepts runner injection; use mock in CI.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import enum
 import os
+import re
 import tempfile
 import uuid
 from collections.abc import Callable, Coroutine
@@ -23,59 +31,166 @@ from typing import Any
 
 from cc_team.exceptions import TmuxError
 
-# Runner 类型: 兼容 asyncio.create_subprocess_exec 签名
+
+class ClearMode(enum.Enum):
+    """Strategy for clearing partial input before pasting text.
+
+    NONE:   No clearing — safe for fresh panes with no prior input.
+    ESCAPE: Send Escape — appropriate for TUI apps (e.g. Claude Code input)
+            where Escape exits the current mode.  NOT safe for zsh, which
+            enters vi-command-mode and swallows the first pasted character.
+    SHELL:  Send C-c + C-u — appropriate for shell prompts (bash/zsh).
+            NOT safe for TUI apps where C-c may cancel an operation.
+    """
+
+    NONE = "none"
+    ESCAPE = "escape"
+    SHELL = "shell"
+
+# Runner type: compatible with asyncio.create_subprocess_exec signature
 Runner = Callable[..., Coroutine[Any, Any, asyncio.subprocess.Process]]
 
-# 短文本阈值: tmux/zsh 固有限制
+# tmux Enter key: use C-m instead of "Enter" to avoid misinterpretation
+# in certain terminal/shell combinations (e.g. zsh vi-mode).
+_ENTER_KEY = "C-m"
+
+# Short text threshold: tmux/zsh intrinsic limit
 SEND_KEYS_THRESHOLD = 200
+
+# ── State detection regexes ──────────────────────────────────
+
+# Claude Code is actively processing (Thinking, Running, etc.)
+_PROCESSING_RE = re.compile(
+    r"Thinking|Running…|esc to interrupt|⏺",
+    re.IGNORECASE,
+)
+# Claude Code is waiting for queued message input
+_WAITING_RE = re.compile(
+    r"Press up to edit queued messages",
+    re.IGNORECASE,
+)
+# Shell prompt ready (❯, $, ⏵ at end of line)
+_READY_RE = re.compile(r"[❯$⏵]\s*$", re.MULTILINE)
+# Strict pane ID format: %<digits>
+_PANE_ID_RE = re.compile(r"^%\d+$")
+
+
+class PaneState(enum.Enum):
+    """Tmux pane activity state detected from captured output."""
+
+    ACTIVE = "active"           # Matches _PROCESSING_RE (Thinking/Running/⏺)
+    READY = "ready"             # Matches prompt (❯ / $ / ⏵)
+    WAITING_INPUT = "waiting"   # Matches "Press up to edit queued messages"
+    IDLE = "idle"               # No pattern matched
+    UNKNOWN = "unknown"         # Capture failed
 
 
 class TmuxManager:
-    """tmux 操作封装，匹配 Claude Code 原生行为。
+    """Tmux operation wrapper matching Claude Code native behavior.
 
     Args:
-        runner: 自定义命令执行函数（默认 asyncio.create_subprocess_exec）
+        runner: Custom command executor (defaults to asyncio.create_subprocess_exec)
     """
 
     def __init__(self, *, runner: Runner | None = None) -> None:
         self._run: Runner = runner or asyncio.create_subprocess_exec
 
-    # ── Pane 管理 ───────────────────────────────────────────
+    # ── Pane management ────────────────────────────────────────
 
     async def split_window(self, *, target_pane: str | None = None) -> str:
-        """创建新 pane，返回 pane ID (如 %20)。
+        """Create a new pane, return pane ID (e.g. %20).
 
         Args:
-            target_pane: 在哪个 pane 旁边分割（默认当前 pane）
+            target_pane: Split next to this pane (default: current pane)
 
         Returns:
-            新 pane 的 ID
+            The new pane ID
 
         Raises:
-            TmuxError: tmux 命令失败
+            TmuxError: tmux command failed
         """
         cmd = ["tmux", "split-window", "-d", "-P", "-F", "#{pane_id}"]
         if target_pane:
             cmd.extend(["-t", target_pane])
         stdout = await self._exec(cmd)
         pane_id = stdout.strip()
-        if not pane_id.startswith("%"):
+        if not _PANE_ID_RE.match(pane_id):
             raise TmuxError(f"Unexpected pane ID format: {pane_id!r}")
         return pane_id
 
     async def kill_pane(self, pane_id: str) -> None:
-        """销毁 pane。"""
+        """Destroy a pane."""
         await self._exec(["tmux", "kill-pane", "-t", pane_id])
 
     async def is_pane_alive(self, pane_id: str) -> bool:
-        """检查 pane 是否存在。"""
-        try:
-            await self._exec(["tmux", "list-panes", "-t", pane_id])
-            return True
-        except TmuxError:
-            return False
+        """Check if a pane exists using display-message (lightweight).
 
-    # ── 命令发送 ────────────────────────────────────────────
+        Validates pane_id format first, then queries via display-message.
+        """
+        if not _PANE_ID_RE.match(pane_id):
+            return False
+        return await self.display_message(pane_id, "#{pane_id}") is not None
+
+    # ── display-message queries ──────────────────────────────
+
+    async def display_message(self, pane_id: str, fmt: str) -> str | None:
+        """Query pane property via tmux display-message -p.
+
+        Returns the stripped output, or None if the command fails.
+        """
+        try:
+            stdout = await self._exec(
+                ["tmux", "display-message", "-t", pane_id, "-p", fmt]
+            )
+            value = stdout.strip()
+            return value if value else None
+        except TmuxError:
+            return None
+
+    async def verify_pane(self, pane_id: str) -> bool:
+        """Validate pane ID format and verify it is alive via display-message."""
+        if not _PANE_ID_RE.match(pane_id):
+            return False
+        return await self.display_message(pane_id, "#{pane_id}") is not None
+
+    async def get_pane_title(self, pane_id: str) -> str | None:
+        """Get the title of a pane, or None if unavailable."""
+        return await self.display_message(pane_id, "#{pane_title}")
+
+    async def notify(self, message: str, *, duration_ms: int = 5000) -> None:
+        """Send a notification via tmux display-message. Silently fails."""
+        with contextlib.suppress(TmuxError):
+            await self._exec(
+                ["tmux", "display-message", "-d", str(duration_ms), message]
+            )
+
+    async def notify_pane(
+        self,
+        pane_id: str,
+        message: str,
+        *,
+        verify_enter: bool = False,
+    ) -> None:
+        """Send text to a pane and show a notification. Silently fails.
+
+        Args:
+            pane_id: Target pane
+            message: Text to send
+            verify_enter: If True, use send_enter_with_retry to confirm
+                the Enter key was accepted.
+        """
+        # Suppress all exceptions: this method is fire-and-forget.
+        with contextlib.suppress(Exception):
+            if verify_enter:
+                content_before = await self.capture_output(pane_id)
+                await self.send_command(pane_id, message, press_enter=False)
+                await self.send_enter_with_retry(pane_id, content_before)
+            else:
+                await self.send_command(pane_id, message)
+
+            await self.notify(message[:SEND_KEYS_THRESHOLD])
+
+    # ── Command sending ────────────────────────────────────────
 
     async def send_command(
         self,
@@ -83,17 +198,27 @@ class TmuxManager:
         text: str,
         *,
         press_enter: bool = True,
+        clear_mode: ClearMode = ClearMode.NONE,
     ) -> None:
-        """发送命令到 pane，自动选择最佳策略。
+        """Send text to a pane, choosing the best strategy automatically.
 
-        短文本 (<200字符且无换行): tmux send-keys -l
-        长文本 (>=200字符或含换行): tmux load-buffer + paste-buffer
+        Short text (<200 chars, no newlines): tmux send-keys -l
+        Long text (>=200 chars or newlines): tmux load-buffer + paste-buffer
 
         Args:
-            pane_id: 目标 pane ID
-            text: 要发送的文本
-            press_enter: 是否在末尾按 Enter
+            pane_id: Target pane ID
+            text: Text to send
+            press_enter: Whether to press Enter after the text
+            clear_mode: How to clear partial input before sending.
+                NONE:   No clearing (default, safe for fresh panes).
+                ESCAPE: Send Escape (for TUI apps like Claude Code).
+                SHELL:  Send C-c + C-u (for shell prompts; zsh-safe).
         """
+        if clear_mode == ClearMode.ESCAPE:
+            await self._clear_with_escape(pane_id)
+        elif clear_mode == ClearMode.SHELL:
+            await self._clear_shell_input(pane_id)
+
         if len(text) < SEND_KEYS_THRESHOLD and "\n" not in text:
             await self._send_keys_short(pane_id, text, press_enter=press_enter)
         else:
@@ -102,34 +227,48 @@ class TmuxManager:
     async def _send_keys_short(
         self, pane_id: str, text: str, *, press_enter: bool
     ) -> None:
-        """短文本: tmux send-keys -l（字面模式）。"""
+        """Short text: tmux send-keys -l (literal mode)."""
         await self._exec(["tmux", "send-keys", "-t", pane_id, "-l", text])
         if press_enter:
-            await self._exec(["tmux", "send-keys", "-t", pane_id, "Enter"])
+            await self._exec(["tmux", "send-keys", "-t", pane_id, _ENTER_KEY])
+
+    async def _clear_with_escape(self, pane_id: str) -> None:
+        """Clear input by sending Escape.
+
+        Appropriate for TUI apps (e.g. Claude Code input box).
+        NOT safe for zsh — Escape enters vi-command-mode and the next
+        pasted character is consumed as a vi command.
+        """
+        await self._exec(["tmux", "send-keys", "-t", pane_id, "Escape"])
+        await asyncio.sleep(0.1)
+
+    async def _clear_shell_input(self, pane_id: str) -> None:
+        """Clear partial input in a shell pane with C-c + C-u.
+
+        Safe for bash/zsh in both emacs and vi mode.
+        NOT safe for TUI apps where C-c may cancel an operation.
+        """
+        await self._exec(["tmux", "send-keys", "-t", pane_id, "C-c"])
+        await self._exec(["tmux", "send-keys", "-t", pane_id, "C-u"])
+        await asyncio.sleep(0.1)
 
     async def _send_keys_long(
         self, pane_id: str, text: str, *, press_enter: bool
     ) -> None:
-        """长文本: load-buffer + paste-buffer 策略。
+        """Long text: load-buffer + paste-buffer strategy.
 
-        完整命令序列:
-        1. send-keys Escape（清除部分输入）
-        2. sleep(100ms)
-        3. 写入临时文件
-        4. load-buffer -b {命名缓冲区} {tmpFile}
-        5. paste-buffer -b {命名缓冲区} -d -t {pane}
-        6. 清理临时文件
-        7. sleep(适当延迟)
-        8. send-keys Enter（如果 press_enter）
+        Sequence:
+        1. Write text to temp file
+        2. load-buffer -b {named buffer} {tmpFile}
+        3. paste-buffer -b {named buffer} -d -t {pane}
+        4. Clean up temp file
+        5. Brief delay
+        6. send-keys Enter (if press_enter)
         """
-        # 1. 清除部分输入
-        await self._exec(["tmux", "send-keys", "-t", pane_id, "Escape"])
-
-        # 2. 短暂延迟
-        await asyncio.sleep(0.1)
-
-        # 3. 写入临时文件
+        # 1. Write to temp file
         fd, tmp_path = tempfile.mkstemp(prefix="cc-team-", suffix=".txt")
+        # Declare buf_name before try so finally can reference it
+        buf_name: str | None = None
         try:
             try:
                 os.write(fd, text.encode("utf-8"))
@@ -137,7 +276,7 @@ class TmuxManager:
                 os.close(fd)
             os.chmod(tmp_path, 0o600)
 
-            # 4. load-buffer（命名缓冲区防竞态，uuid 保证唯一性）
+            # 2. load-buffer (named buffer to prevent races, uuid for uniqueness)
             buf_name = f"cc-team-{os.getpid()}-{uuid.uuid4().hex[:8]}"
             await self._exec(
                 [
@@ -149,7 +288,7 @@ class TmuxManager:
                 ]
             )
 
-            # 5. paste-buffer（-d 自动删除缓冲区）
+            # 3. paste-buffer (-d auto-deletes buffer on success)
             await self._exec(
                 [
                     "tmux",
@@ -162,28 +301,35 @@ class TmuxManager:
                 ]
             )
         finally:
-            # 6. 清理临时文件
+            # 4. Clean up temp file
             with contextlib.suppress(OSError):
                 os.unlink(tmp_path)
+            # 5. Safety net: delete buffer if paste-buffer failed/was interrupted
+            # (-d flag normally removes it, but we ensure no leak)
+            if buf_name is not None:
+                with contextlib.suppress(TmuxError):
+                    await self._exec(
+                        ["tmux", "delete-buffer", "-b", buf_name]
+                    )
 
-        # 7. 适当延迟
+        # 6. Brief delay for paste to take effect
         await asyncio.sleep(0.05)
 
-        # 8. 按 Enter
+        # 7. Press Enter
         if press_enter:
-            await self._exec(["tmux", "send-keys", "-t", pane_id, "Enter"])
+            await self._exec(["tmux", "send-keys", "-t", pane_id, _ENTER_KEY])
 
-    # ── 输出捕获 ────────────────────────────────────────────
+    # ── Output capture ─────────────────────────────────────────
 
     async def capture_output(self, pane_id: str, *, lines: int = 50) -> str:
-        """捕获 pane 输出。
+        """Capture pane output.
 
         Args:
-            pane_id: 目标 pane ID
-            lines: 捕获行数
+            pane_id: Target pane ID
+            lines: Number of lines to capture
 
         Returns:
-            捕获的文本
+            Captured text
         """
         start_line = f"-{lines}"
         return await self._exec(
@@ -198,20 +344,90 @@ class TmuxManager:
             ]
         )
 
-    # ── 环境检测 ────────────────────────────────────────────
+    # ── State detection ────────────────────────────────────────
+
+    async def detect_state(self, pane_id: str) -> PaneState:
+        """Detect pane activity state from captured output.
+
+        Priority: WAITING_INPUT > ACTIVE > READY > IDLE.
+        Returns UNKNOWN if capture fails.
+        """
+        try:
+            content = await self.capture_output(pane_id)
+        except TmuxError:
+            return PaneState.UNKNOWN
+        if not content:
+            return PaneState.UNKNOWN
+        if _WAITING_RE.search(content):
+            return PaneState.WAITING_INPUT
+        if _PROCESSING_RE.search(content):
+            return PaneState.ACTIVE
+        if _READY_RE.search(content):
+            return PaneState.READY
+        return PaneState.IDLE
+
+    # ── Retry helpers ─────────────────────────────────────────
+
+    async def send_enter_with_retry(
+        self,
+        pane_id: str,
+        content_before: str,
+        *,
+        max_retries: int = 3,
+        retry_delay: float = 2.0,
+    ) -> bool:
+        """Send Enter (C-m) and verify the pane accepted it.
+
+        Compares captured output after sending Enter with *content_before*.
+        Success if the content changed OR _PROCESSING_RE matches.
+
+        Args:
+            pane_id: Target pane
+            content_before: Captured output before pressing Enter
+            max_retries: Maximum number of attempts
+            retry_delay: Seconds to wait between retries
+
+        Returns:
+            True if Enter was accepted, False after all retries exhausted.
+        """
+        last = max_retries - 1
+        for attempt in range(max_retries):
+            try:
+                await self._exec(
+                    ["tmux", "send-keys", "-t", pane_id, _ENTER_KEY]
+                )
+            except TmuxError:
+                if attempt < last:
+                    await asyncio.sleep(retry_delay)
+                continue
+
+            await asyncio.sleep(retry_delay)
+
+            try:
+                content_after = await self.capture_output(pane_id)
+            except TmuxError:
+                continue
+
+            if content_after != content_before or _PROCESSING_RE.search(
+                content_after
+            ):
+                return True
+        return False
+
+    # ── Environment detection ────────────────────────────────
 
     @staticmethod
     def is_tmux_available() -> bool:
-        """检查是否在 tmux 环境中（$TMUX 环境变量）。"""
+        """Check if running inside tmux ($TMUX env var)."""
         return bool(os.environ.get("TMUX"))
 
-    # ── 内部辅助 ────────────────────────────────────────────
+    # ── Internal helpers ────────────────────────────────────────
 
     async def _exec(self, cmd: list[str]) -> str:
-        """执行 tmux 命令，返回 stdout。
+        """Execute a tmux command, return stdout.
 
         Raises:
-            TmuxError: 命令退出码非零
+            TmuxError: Non-zero exit code
         """
         proc = await self._run(
             *cmd,

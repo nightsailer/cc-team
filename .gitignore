@@ -208,5 +208,3 @@ __marimo__/
 # claude
 .claude/
 logs/
-# Project specs (local only)
-specs/

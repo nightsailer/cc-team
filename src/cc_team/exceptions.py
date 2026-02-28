@@ -10,6 +10,14 @@ class CCTeamError(Exception):
     """cc-team 所有异常的基类。"""
 
 
+class TeamAlreadyExistsError(CCTeamError):
+    """Team already exists and cannot be created again."""
+
+    def __init__(self, name: str) -> None:
+        self.team_name = name
+        super().__init__(f"Team already exists: {name!r}")
+
+
 class NotInitializedError(CCTeamError):
     """Controller 尚未初始化（未调用 init 或已 shutdown）。"""
 
