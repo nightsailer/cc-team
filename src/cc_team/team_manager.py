@@ -23,7 +23,7 @@ from cc_team._serialization import (
 )
 from cc_team.exceptions import AgentNotFoundError
 from cc_team.filelock import FileLock
-from cc_team.types import AGENT_COLORS, TeamConfig, TeamMember
+from cc_team.types import AGENT_COLORS, TEAM_LEAD_AGENT_TYPE, AgentColor, TeamConfig, TeamMember
 
 
 class TeamManager:
@@ -128,6 +128,10 @@ class TeamManager:
             return []
         return config.members
 
+    def list_teammates(self) -> list[TeamMember]:
+        """返回 Teammates 列表（排除 team-lead）。"""
+        return [m for m in self.list_members() if m.agent_type != TEAM_LEAD_AGENT_TYPE]
+
     # ── 添加成员 ────────────────────────────────────────────
 
     async def add_member(self, member: TeamMember) -> None:
@@ -150,16 +154,21 @@ class TeamManager:
             config.members.append(member)
             atomic_write_json(self._config_path, team_config_to_dict(config))
 
-    def next_color(self) -> str:
+    def next_color(self, config: TeamConfig | None = None) -> AgentColor:
         """分配下一个颜色（8 色循环）。
 
         基于 config.json 中现有成员数量推算索引，
         不依赖实例状态，进程重启后仍能正确分配。
 
+        Args:
+            config: 已读取的团队配置，为 None 时自动读取。
+                    当调用方已持有 config 时传入可避免重复 IO。
+
         Returns:
             颜色字符串
         """
-        config = self.read()
+        if config is None:
+            config = self.read()
         member_count = len(config.members) if config else 0
         return AGENT_COLORS[member_count % len(AGENT_COLORS)]
 

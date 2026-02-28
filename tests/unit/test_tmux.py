@@ -20,7 +20,6 @@ import pytest
 from cc_team.exceptions import TmuxError
 from cc_team.tmux import SEND_KEYS_THRESHOLD, TmuxManager
 
-
 # ── Mock Process Helper ──────────────────────────────────────
 
 

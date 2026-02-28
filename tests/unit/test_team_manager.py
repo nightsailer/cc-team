@@ -17,13 +17,12 @@ from pathlib import Path
 
 import pytest
 
-import cc_team.paths as paths_mod
 import cc_team._serialization as ser_mod
+import cc_team.paths as paths_mod
 import cc_team.team_manager as tm_mod
 from cc_team.exceptions import AgentNotFoundError
 from cc_team.team_manager import TeamManager
 from cc_team.types import AGENT_COLORS, TeamMember
-
 
 # ── Fixtures ──────────────────────────────────────────────────
 

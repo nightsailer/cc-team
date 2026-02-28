@@ -34,7 +34,6 @@ from cc_team.types import (
     TeamMember,
 )
 
-
 # ── snake_case ↔ camelCase 映射 ─────────────────────────────
 
 

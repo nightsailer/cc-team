@@ -12,38 +12,21 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
+from conftest import FIXED_MS
 
 import cc_team.paths as paths_mod
-import cc_team._serialization as ser_mod
-import cc_team.inbox as inbox_mod
-import cc_team.team_manager as tm_mod
-from cc_team.cli import main, _build_parser, _cmd_agent_spawn, _cmd_agent_kill
+from cc_team.cli import _build_parser, main
 from cc_team.team_manager import TeamManager
 from cc_team.types import TeamMember
 
+# isolated_home fixture 由 tests/conftest.py 提供
+
 
 # ── Fixtures ──────────────────────────────────────────────────
-
-FIXED_ISO = "2026-02-28T10:00:00.000Z"
-FIXED_MS = 1772193600000
-
-
-@pytest.fixture
-def isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """隔离 ~/.claude/ 到 tmp_path。"""
-    home = tmp_path / ".claude"
-    home.mkdir()
-    monkeypatch.setattr(paths_mod, "claude_home", lambda: home)
-    monkeypatch.setattr(ser_mod, "now_iso", lambda: FIXED_ISO)
-    monkeypatch.setattr(ser_mod, "now_ms", lambda: FIXED_MS)
-    monkeypatch.setattr(inbox_mod, "now_iso", lambda: FIXED_ISO)
-    monkeypatch.setattr(tm_mod, "now_ms", lambda: FIXED_MS)
-    return home
 
 
 @pytest.fixture
@@ -280,7 +263,9 @@ class TestJsonOutput:
     """--json 输出格式验证。"""
 
     @pytest.mark.asyncio
-    async def test_team_create_json(self, isolated_home: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    async def test_team_create_json(
+        self, isolated_home: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
         """team create --json 输出 JSON。"""
         parser = _build_parser()
         args = parser.parse_args([

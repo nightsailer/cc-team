@@ -12,11 +12,12 @@ cc-team 的核心入口，协调所有子系统:
 
 from __future__ import annotations
 
+import contextlib
 import os
 import uuid
-from typing import Any, Callable, Coroutine
+from typing import Any
 
-from cc_team._serialization import now_iso, now_ms
+from cc_team._serialization import now_ms
 from cc_team.agent_handle import AgentHandle
 from cc_team.event_router import EventRouter
 from cc_team.events import AsyncEventEmitter
@@ -28,7 +29,6 @@ from cc_team.process_manager import ProcessManager
 from cc_team.task_manager import TaskManager
 from cc_team.team_manager import TeamManager
 from cc_team.types import (
-    AgentColor,
     ControllerOptions,
     SpawnAgentOptions,
     TaskFile,
@@ -146,10 +146,8 @@ class Controller(AsyncEventEmitter):
 
         # 强制终止所有存活 Agent
         for name in list(self._handles.keys()):
-            try:
+            with contextlib.suppress(Exception):
                 await self._process_manager.kill(name)
-            except (AgentNotFoundError, Exception):
-                pass
 
         # 销毁团队
         await self._team_manager.destroy()
@@ -211,10 +209,8 @@ class Controller(AsyncEventEmitter):
             )
         except Exception:
             # 回滚: 移除已注册的成员
-            try:
+            with contextlib.suppress(Exception):
                 await self._team_manager.remove_member(options.name)
-            except (AgentNotFoundError, Exception):
-                pass
             raise
 
         # 更新成员的 pane_id
@@ -372,15 +368,13 @@ class Controller(AsyncEventEmitter):
 
     # ── 内部事件处理 ────────────────────────────────────────
 
-    async def _on_shutdown_approved(self, agent_name: str, msg: Any) -> None:
+    async def _on_shutdown_approved(self, agent_name: str, _msg: Any) -> None:
         """处理 Agent 关闭确认。"""
         self._process_manager.untrack(agent_name)
         self._handles.pop(agent_name, None)
-        try:
+        with contextlib.suppress(AgentNotFoundError):
             await self._team_manager.remove_member(agent_name)
-        except AgentNotFoundError:
-            pass
 
-    async def _on_poller_error(self, exc: Exception, context: str) -> None:
+    async def _on_poller_error(self, exc: Exception, _context: str) -> None:
         """InboxPoller 异常转发到 error 事件。"""
         await self.emit("error", exc)

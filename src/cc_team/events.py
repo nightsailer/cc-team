@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import asyncio
 from collections import defaultdict
-from typing import Any, Callable, Coroutine
-
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 # Handler 类型: 接受任意参数的异步函数
 EventHandler = Callable[..., Coroutine[Any, Any, None]]

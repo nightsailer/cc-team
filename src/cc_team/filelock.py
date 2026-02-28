@@ -14,9 +14,9 @@ from __future__ import annotations
 
 import asyncio
 import fcntl
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
-from typing import AsyncIterator
 
 from cc_team.exceptions import FileLockError
 
@@ -61,15 +61,13 @@ class FileLock:
 
         fd = None
         try:
-            fd = open(self._path, "w")
+            fd = open(self._path, "w")  # noqa: SIM115 — fd 必须跨 yield 保持打开
             await self._try_lock(fd)
             yield
         finally:
             if fd is not None:
-                try:
+                with suppress(OSError):
                     fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
-                except OSError:
-                    pass
                 fd.close()
 
     async def _try_lock(self, fd: object) -> None:
@@ -81,6 +79,6 @@ class FileLock:
                 return  # 获取成功
             except (BlockingIOError, OSError):
                 if attempt == self._max_attempts:
-                    raise FileLockError(str(self._path), attempt)
+                    raise FileLockError(str(self._path), attempt) from None
                 await asyncio.sleep(min(delay_ms, _MAX_DELAY_MS) / 1000.0)
                 delay_ms *= 2  # 指数退避

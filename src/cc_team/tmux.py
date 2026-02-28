@@ -14,10 +14,12 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import tempfile
 import uuid
-from typing import Any, Callable, Coroutine
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 from cc_team.exceptions import TmuxError
 
@@ -161,10 +163,8 @@ class TmuxManager:
             )
         finally:
             # 6. 清理临时文件
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(tmp_path)
-            except OSError:
-                pass
 
         # 7. 适当延迟
         await asyncio.sleep(0.05)

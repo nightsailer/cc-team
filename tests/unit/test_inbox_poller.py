@@ -18,13 +18,12 @@ from pathlib import Path
 
 import pytest
 
-import cc_team.paths as paths_mod
 import cc_team._serialization as ser_mod
 import cc_team.inbox as inbox_mod
+import cc_team.paths as paths_mod
 from cc_team.inbox import InboxIO
 from cc_team.inbox_poller import InboxPoller
 from cc_team.types import InboxMessage
-
 
 # ── Fixtures ──────────────────────────────────────────────────
 
@@ -377,7 +376,6 @@ class TestMtimeTimingBehavior:
         poller.on_error(noop_error)
 
         await inbox.write(_make_msg(text="retry-me"))
-        mtime_before = poller._last_mtime
 
         # 第一次 poll：handler 会抛异常
         await poller.poll_once()

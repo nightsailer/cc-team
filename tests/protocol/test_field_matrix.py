@@ -12,7 +12,6 @@ from cc_team._serialization import (
 )
 from cc_team.types import (
     InboxMessage,
-    PermissionRequestMessage,
     PlanApprovalResponseMessage,
     TaskFile,
     TeamMember,

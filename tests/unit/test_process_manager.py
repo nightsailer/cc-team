@@ -12,8 +12,7 @@
 
 from __future__ import annotations
 
-import asyncio
-import os
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -22,7 +21,6 @@ from cc_team.exceptions import AgentNotFoundError, SpawnError, TmuxError
 from cc_team.process_manager import ProcessManager, _find_claude_binary
 from cc_team.tmux import TmuxManager
 from cc_team.types import SpawnAgentOptions
-
 
 # ── Mock Helpers ──────────────────────────────────────────────
 
@@ -40,10 +38,10 @@ def _make_mock_tmux() -> MagicMock:
 def _make_options(
     name: str = "worker-1",
     prompt: str = "Do the work",
-    **kwargs: object,
+    **kwargs: Any,
 ) -> SpawnAgentOptions:
     """创建 SpawnAgentOptions。"""
-    return SpawnAgentOptions(name=name, prompt=prompt, **kwargs)
+    return SpawnAgentOptions(name=name, prompt=prompt, **kwargs)  # type: ignore[arg-type]
 
 
 # ── Spawn ────────────────────────────────────────────────────

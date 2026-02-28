@@ -5,7 +5,6 @@ from __future__ import annotations
 from cc_team.types import (
     AGENT_COLORS,
     AgentController,
-    ControllerOptions,
     IdleNotificationMessage,
     InboxMessage,
     PermissionRequestMessage,
@@ -20,7 +19,6 @@ from cc_team.types import (
     TeamConfig,
     TeamMember,
 )
-
 
 # ── TeamMember ──────────────────────────────────────────────
 
@@ -173,7 +171,7 @@ class TestAgentColors:
 
     def test_color_order(self) -> None:
         expected = ("blue", "green", "yellow", "purple", "orange", "pink", "cyan", "red")
-        assert AGENT_COLORS == expected
+        assert expected == AGENT_COLORS
 
     def test_cycling_formula(self) -> None:
         """验证 AGENT_COLORS[index % 8] 循环分配。"""

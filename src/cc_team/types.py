@@ -23,6 +23,9 @@ PermissionMode = Literal[
 
 AgentType = Literal["general-purpose", "Explore", "Plan", "Bash", "team-lead"]
 
+# team-lead agent type 常量，避免散布裸字符串
+TEAM_LEAD_AGENT_TYPE: AgentType = "team-lead"
+
 BackendType = Literal["tmux", "in-process"]
 
 AgentColor = Literal["blue", "green", "yellow", "purple", "orange", "pink", "cyan", "red"]

@@ -16,12 +16,11 @@ from pathlib import Path
 
 import pytest
 
-import cc_team.paths as paths_mod
 import cc_team._serialization as ser_mod
 import cc_team.inbox as inbox_mod
+import cc_team.paths as paths_mod
 from cc_team.inbox import InboxIO
-from cc_team.types import InboxMessage
-
+from cc_team.types import AgentColor, InboxMessage
 
 # ── Fixtures ──────────────────────────────────────────────────
 
@@ -53,7 +52,7 @@ def _make_msg(
     text: str = "hello",
     read: bool = False,
     summary: str | None = None,
-    color: str | None = None,
+    color: AgentColor | None = None,
 ) -> InboxMessage:
     """工厂函数：快速构建 InboxMessage。"""
     return InboxMessage(

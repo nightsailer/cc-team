@@ -18,10 +18,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import sys
 from typing import Any
-
 
 # ── 输出辅助 ──────────────────────────────────────────────
 
@@ -120,7 +120,7 @@ async def _cmd_agent_spawn(args: argparse.Namespace) -> None:
     )
 
     # 1. 分配颜色 + 注册成员
-    color = mgr.next_color()
+    color = mgr.next_color(config)
     member = TeamMember(
         agent_id=f"{options.name}@{team}",
         name=options.name,
@@ -152,10 +152,8 @@ async def _cmd_agent_spawn(args: argparse.Namespace) -> None:
         )
     except Exception:
         # 回滚: 移除已注册的成员
-        try:
+        with contextlib.suppress(Exception):
             await mgr.remove_member(options.name)
-        except Exception:
-            pass
         raise
 
     # 更新 pane_id
@@ -172,7 +170,7 @@ async def _cmd_agent_list(args: argparse.Namespace) -> None:
 
     team = _require_team(args)
     mgr = TeamManager(team)
-    members = mgr.list_members()
+    members = mgr.list_teammates()
     if args.use_json:
         _json_out([
             {"name": m.name, "type": m.agent_type, "model": m.model,
@@ -238,10 +236,8 @@ async def _cmd_agent_kill(args: argparse.Namespace) -> None:
     # 终止 tmux pane
     if member.tmux_pane_id:
         tmux = TmuxManager()
-        try:
+        with contextlib.suppress(Exception):
             await tmux.kill_pane(member.tmux_pane_id)
-        except Exception:
-            pass  # pane 可能已终止
 
     # 从团队中移除成员
     await mgr.remove_member(args.name)
@@ -335,7 +331,9 @@ async def _cmd_msg_send(args: argparse.Namespace) -> None:
     team = _require_team(args)
     builder = MessageBuilder(team)
     await builder.send_plain(args.to, args.content, summary=args.summary)
-    if not args.quiet:
+    if args.use_json:
+        _json_out({"ok": True, "to": args.to})
+    elif not args.quiet:
         print(f"Message sent to '{args.to}'.")
 
 
@@ -351,7 +349,9 @@ async def _cmd_msg_broadcast(args: argparse.Namespace) -> None:
         sys.exit(1)
     builder = MessageBuilder(team)
     await builder.broadcast(args.content, recipients, summary=args.summary)
-    if not args.quiet:
+    if args.use_json:
+        _json_out({"ok": True, "recipients": recipients})
+    elif not args.quiet:
         print(f"Broadcast sent to {len(recipients)} agents.")
 
 
@@ -419,7 +419,8 @@ async def _cmd_status(args: argparse.Namespace) -> None:
     pending = sum(1 for t in tasks if t.status == "pending")
     in_progress = sum(1 for t in tasks if t.status == "in_progress")
     completed = sum(1 for t in tasks if t.status == "completed")
-    print(f"\nTasks ({len(tasks)}: {pending} pending, {in_progress} in-progress, {completed} completed):")
+    summary = f"{pending} pending, {in_progress} in-progress, {completed} completed"
+    print(f"\nTasks ({len(tasks)}: {summary}):")
     for t in tasks:
         owner = f" @{t.owner}" if t.owner else ""
         print(f"  #{t.id} [{t.status:12s}] {t.subject}{owner}")
@@ -434,7 +435,10 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Claude Code multi-agent team orchestration CLI",
     )
     # 全局选项（dest 避免与 json 模块冲突）
-    parser.add_argument("--team-name", dest="team_name", help="Team name (required for most commands)")
+    parser.add_argument(
+        "--team-name", dest="team_name",
+        help="Team name (required for most commands)",
+    )
     parser.add_argument("--json", dest="use_json", action="store_true", help="JSON output format")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     parser.add_argument("--quiet", "-q", action="store_true", help="Quiet mode")
@@ -463,7 +467,10 @@ def _build_parser() -> argparse.ArgumentParser:
     asp = agent_sub.add_parser("spawn", help="Spawn a new agent")
     asp.add_argument("--name", required=True, help="Agent name")
     asp.add_argument("--prompt", required=True, help="Initial prompt for the agent")
-    asp.add_argument("--type", default="general-purpose", help="Agent type (default: general-purpose)")
+    asp.add_argument(
+        "--type", default="general-purpose",
+        help="Agent type (default: general-purpose)",
+    )
     asp.add_argument("--model", default="claude-sonnet-4-6", help="Model ID")
     asp.set_defaults(func=_cmd_agent_spawn)
 

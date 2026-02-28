@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import tempfile
@@ -320,10 +321,8 @@ def atomic_write_json(path: Path, data: Any) -> None:
         os.replace(tmp_path, str(path))
     except BaseException:
         # 清理临时文件（忽略清理失败）
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp_path)
-        except OSError:
-            pass
         raise
 
 
@@ -353,7 +352,7 @@ def read_json(path: Path, *, default: Any = None) -> Any:
         return default
 
     last_error: Exception | None = None
-    for attempt in range(_READ_RETRIES):
+    for _attempt in range(_READ_RETRIES):
         try:
             text = path.read_text(encoding="utf-8")
             if not text.strip():

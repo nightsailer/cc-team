@@ -10,7 +10,6 @@ import json
 
 from cc_team._serialization import (
     build_message_body,
-    from_json_dict,
     inbox_message_from_dict,
     inbox_message_to_dict,
     parse_message_body,
@@ -18,7 +17,6 @@ from cc_team._serialization import (
     task_file_to_dict,
     team_config_from_dict,
     team_config_to_dict,
-    to_json_dict,
 )
 from cc_team.types import (
     IdleNotificationMessage,
@@ -34,7 +32,6 @@ from cc_team.types import (
     TeamConfig,
     TeamMember,
 )
-
 
 # ── 黄金数据集（独立构造，基于协议规范）─────────────────────
 

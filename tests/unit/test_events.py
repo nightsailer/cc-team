@@ -18,7 +18,6 @@ import pytest
 
 from cc_team.events import AsyncEventEmitter
 
-
 # ── on / off 注册 ────────────────────────────────────────────
 
 

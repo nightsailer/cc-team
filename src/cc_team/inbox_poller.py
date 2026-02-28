@@ -15,7 +15,9 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Callable, Coroutine
+import contextlib
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 from cc_team._serialization import parse_message_body
 from cc_team.inbox import InboxIO
@@ -94,10 +96,8 @@ class InboxPoller:
         self._running = False
         if self._task is not None:
             self._task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._task
-            except asyncio.CancelledError:
-                pass
             self._task = None
 
     async def poll_once(self) -> list[InboxMessage]:
@@ -168,8 +168,5 @@ class InboxPoller:
     async def _report_error(self, exc: Exception, context: str) -> None:
         """报告异常到所有 error handler。"""
         for handler in self._error_handlers:
-            try:
+            with contextlib.suppress(Exception):
                 await handler(exc, context)
-            except Exception:
-                # error handler 自身的异常被静默忽略，防止无限递归
-                pass

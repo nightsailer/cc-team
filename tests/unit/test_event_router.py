@@ -11,14 +11,13 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
 from cc_team.event_router import EventRouter
 from cc_team.events import AsyncEventEmitter
 from cc_team.types import InboxMessage
-
 
 # ── Helpers ───────────────────────────────────────────────────
 

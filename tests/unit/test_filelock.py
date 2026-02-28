@@ -19,8 +19,7 @@ from unittest.mock import patch
 import pytest
 
 from cc_team.exceptions import FileLockError
-from cc_team.filelock import FileLock, _BASE_DELAY_MS, _MAX_ATTEMPTS, _MAX_DELAY_MS
-
+from cc_team.filelock import _BASE_DELAY_MS, _MAX_ATTEMPTS, _MAX_DELAY_MS, FileLock
 
 # ── 基本锁获取与释放 ──────────────────────────────────────────
 
@@ -137,7 +136,6 @@ class TestFileLockRetry:
                 raise BlockingIOError("locked")
             original_flock(fd, operation)
 
-        original_sleep = asyncio.sleep
 
         async def mock_sleep(seconds: float) -> None:
             sleep_delays.append(seconds)
@@ -209,10 +207,10 @@ class TestFileLockError:
         lock = FileLock(lock_path, max_attempts=3, base_delay_ms=1)
 
         with patch.object(fcntl, "flock", side_effect=always_fail), \
-             patch.object(asyncio, "sleep", side_effect=noop_sleep):
-            with pytest.raises(FileLockError) as exc_info:
-                async with lock.acquire():
-                    pass
+             patch.object(asyncio, "sleep", side_effect=noop_sleep), \
+             pytest.raises(FileLockError) as exc_info:
+            async with lock.acquire():
+                pass
 
         assert exc_info.value.path == str(lock_path)
         assert exc_info.value.attempts == 3

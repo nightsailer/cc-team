@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shlex
 import shutil
@@ -78,10 +79,8 @@ class ProcessManager:
             await self._tmux.send_command(pane_id, command)
         except TmuxError as e:
             # 清理已创建的 pane
-            try:
+            with contextlib.suppress(TmuxError):
                 await self._tmux.kill_pane(pane_id)
-            except TmuxError:
-                pass
             raise SpawnError(f"Failed to send command to pane: {e}") from e
 
         self._panes[options.name] = pane_id
@@ -99,10 +98,8 @@ class ProcessManager:
         if pane_id is None:
             raise AgentNotFoundError(agent_name)
 
-        try:
+        with contextlib.suppress(TmuxError):
             await self._tmux.kill_pane(pane_id)
-        except TmuxError:
-            pass  # pane 可能已经终止
 
         del self._panes[agent_name]
 

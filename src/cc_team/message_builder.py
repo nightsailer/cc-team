@@ -15,6 +15,7 @@ from __future__ import annotations
 from cc_team._serialization import build_message_body, now_iso, now_ms
 from cc_team.inbox import InboxIO
 from cc_team.types import (
+    AgentColor,
     InboxMessage,
     PlanApprovalResponseMessage,
     ShutdownRequestMessage,
@@ -44,7 +45,7 @@ class MessageBuilder:
         *,
         summary: str | None = None,
         from_name: str | None = None,
-        color: str | None = None,
+        color: AgentColor | None = None,
     ) -> None:
         """发送纯文本消息。"""
         sender = from_name or self._lead_name

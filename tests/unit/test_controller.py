@@ -18,17 +18,16 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-import cc_team.paths as paths_mod
 import cc_team._serialization as ser_mod
 import cc_team.inbox as inbox_mod
 import cc_team.message_builder as mb_mod
+import cc_team.paths as paths_mod
 import cc_team.team_manager as tm_mod
 from cc_team.controller import Controller
 from cc_team.exceptions import AgentNotFoundError, NotInitializedError
 from cc_team.process_manager import ProcessManager
 from cc_team.tmux import TmuxManager
 from cc_team.types import ControllerOptions, SpawnAgentOptions
-
 
 # ── Fixtures ──────────────────────────────────────────────────
 

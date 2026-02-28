@@ -18,7 +18,6 @@ import pytest
 from cc_team.agent_handle import AgentHandle
 from cc_team.types import AgentController
 
-
 # ── Mock Controller ──────────────────────────────────────────
 
 

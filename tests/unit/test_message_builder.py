@@ -14,14 +14,14 @@ import json
 from pathlib import Path
 
 import pytest
+from conftest import read_inbox as _read_inbox_impl
 
-import cc_team.paths as paths_mod
 import cc_team._serialization as ser_mod
 import cc_team.inbox as inbox_mod
 import cc_team.message_builder as mb_mod
+import cc_team.paths as paths_mod
 from cc_team.message_builder import MessageBuilder
 from cc_team.types import TaskFile
-
 
 # ── Fixtures ──────────────────────────────────────────────────
 
@@ -51,11 +51,8 @@ def builder(isolated_home: Path) -> MessageBuilder:
 
 
 def _read_inbox(team: str, agent: str) -> list[dict]:
-    """读取 inbox 文件原始 JSON。"""
-    path = paths_mod.inbox_path(team, agent)
-    if not path.exists():
-        return []
-    return json.loads(path.read_text())
+    """读取 inbox 文件原始 JSON（委托给 conftest.read_inbox）。"""
+    return _read_inbox_impl(team, agent)
 
 
 # ── send_plain ───────────────────────────────────────────────

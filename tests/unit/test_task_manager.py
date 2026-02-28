@@ -19,7 +19,6 @@ import cc_team.paths as paths_mod
 from cc_team.exceptions import CyclicDependencyError
 from cc_team.task_manager import TaskManager
 
-
 # ── Fixtures ──────────────────────────────────────────────────
 
 
@@ -248,12 +247,17 @@ class TestTaskDelete:
         await mgr.add_dependency(t2.id, [t1.id])
 
         # 验证依赖已建立
-        assert t1.id in mgr.read(t2.id).blocked_by
-        assert t2.id in mgr.read(t1.id).blocks
+        t2_loaded = mgr.read(t2.id)
+        t1_loaded = mgr.read(t1.id)
+        assert t2_loaded is not None
+        assert t1_loaded is not None
+        assert t1.id in t2_loaded.blocked_by
+        assert t2.id in t1_loaded.blocks
 
         # 删除 t1，t2 的 blockedBy 应被清理
         await mgr.delete(t1.id)
         t2_after = mgr.read(t2.id)
+        assert t2_after is not None
         assert t1.id not in t2_after.blocked_by
 
     @pytest.mark.asyncio
@@ -278,6 +282,8 @@ class TestDependencies:
 
         t1_fresh = mgr.read(t1.id)
         t2_fresh = mgr.read(t2.id)
+        assert t1_fresh is not None
+        assert t2_fresh is not None
         assert t2.id in t1_fresh.blocks
         assert t1.id in t2_fresh.blocked_by
 
@@ -291,6 +297,7 @@ class TestDependencies:
         await mgr.add_dependency(t3.id, [t1.id, t2.id])
 
         t3_fresh = mgr.read(t3.id)
+        assert t3_fresh is not None
         assert set(t3_fresh.blocked_by) == {t1.id, t2.id}
 
     @pytest.mark.asyncio
@@ -303,6 +310,7 @@ class TestDependencies:
         await mgr.add_dependency(t2.id, [t1.id])  # 重复
 
         t2_fresh = mgr.read(t2.id)
+        assert t2_fresh is not None
         assert t2_fresh.blocked_by.count(t1.id) == 1
 
     @pytest.mark.asyncio
@@ -322,6 +330,8 @@ class TestDependencies:
 
         t1_fresh = mgr.read(t1.id)
         t2_fresh = mgr.read(t2.id)
+        assert t1_fresh is not None
+        assert t2_fresh is not None
         assert t2.id not in t1_fresh.blocks
         assert t1.id not in t2_fresh.blocked_by
 
@@ -392,6 +402,7 @@ class TestCycleDetection:
         await mgr.add_dependency(d.id, [c.id])  # 不应抛出
 
         d_fresh = mgr.read(d.id)
+        assert d_fresh is not None
         assert set(d_fresh.blocked_by) == {b.id, c.id}
 
 
@@ -405,7 +416,7 @@ class TestAutoIncrementID:
     async def test_id_after_gap(self, mgr: TaskManager) -> None:
         """删除中间任务后，ID 基于最大现有值继续。"""
         t1 = await mgr.create(subject="A", description="d")
-        t2 = await mgr.create(subject="B", description="d")
+        await mgr.create(subject="B", description="d")
         await mgr.delete(t1.id)  # 删除 ID=1，但文件仍存在（状态为 deleted）
         t3 = await mgr.create(subject="C", description="d")
         assert t3.id == "3"  # 基于 max(1,2) + 1

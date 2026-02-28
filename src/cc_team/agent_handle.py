@@ -35,10 +35,10 @@ class AgentHandle:
         pane_id: str = "",
         color: AgentColor | None = None,
     ) -> None:
-        self._name = name
-        self._controller = controller
-        self._pane_id = pane_id
-        self._color = color
+        self._name: str = name
+        self._controller: AgentController = controller
+        self._pane_id: str = pane_id
+        self._color: AgentColor | None = color
 
     @property
     def name(self) -> str:
