@@ -14,6 +14,7 @@
 - **双重接口** — 既可作为 Python 库使用，也可通过 `cct` CLI 操作
 - **事件驱动** — Node.js 风格的 `AsyncEventEmitter`，支持响应式编程
 - **文件级锁** — 基于 `fcntl` 异步封装的安全并发访问
+- **内置技能参考** — `cct skill` 输出面向 AI 智能体的自包含命令参考文档
 
 ## 安装
 
@@ -117,6 +118,10 @@ cct --team-name my-project message read --agent researcher
 # 查看整体状态
 cct --team-name my-project status
 
+# 输出 AI 智能体技能参考文档（无需 --team-name）
+cct skill
+cct --json skill
+
 # 优雅关闭
 cct --team-name my-project agent shutdown --name researcher --reason "Done"
 
@@ -153,7 +158,8 @@ cc-team/src/cc_team/
 ├── process_manager.py    # 智能体进程生命周期管理
 ├── agent_handle.py       # 智能体代理对象
 ├── controller.py         # 中央编排器
-└── cli.py                # cct CLI 入口
+├── cli.py                # cct CLI 入口
+└── _skill_doc.py         # AI 智能体技能参考文档
 ```
 
 **层级依赖关系（上 → 下）：**

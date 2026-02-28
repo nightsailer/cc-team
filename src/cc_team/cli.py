@@ -6,12 +6,14 @@
 - task: 任务管理 (create/list/update/complete)
 - message: 消息 (send/broadcast/read)
 - status: 综合状态
+- skill: AI 智能体技能参考文档
 
 用法:
     cct --team-name my-team team create --description "My project"
     cct --team-name my-team agent spawn --name researcher --prompt "Analyze code"
     cct --team-name my-team task list
     cct --team-name my-team status
+    cct skill
 """
 
 from __future__ import annotations
@@ -426,6 +428,21 @@ async def _cmd_status(args: argparse.Namespace) -> None:
         print(f"  #{t.id} [{t.status:12s}] {t.subject}{owner}")
 
 
+# ── skill 命令 ────────────────────────────────────────────
+
+
+async def _cmd_skill(args: argparse.Namespace) -> None:
+    from cc_team._skill_doc import SKILL_DOC, SKILL_DOC_VERSION, SKILL_SECTIONS
+
+    if args.use_json:
+        _json_out({
+            "version": SKILL_DOC_VERSION,
+            "sections": SKILL_SECTIONS,
+        })
+    else:
+        print(SKILL_DOC)
+
+
 # ── Parser 构建 ───────────────────────────────────────────
 
 
@@ -538,6 +555,10 @@ def _build_parser() -> argparse.ArgumentParser:
     # ── status ────────────────────────────────
     st = sub.add_parser("status", help="Show comprehensive team status")
     st.set_defaults(func=_cmd_status)
+
+    # ── skill (no --team-name required) ──────
+    sk = sub.add_parser("skill", help="Print AI agent skill reference document")
+    sk.set_defaults(func=_cmd_skill)
 
     return parser
 

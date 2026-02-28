@@ -89,7 +89,8 @@ cc-team/
 │       ├── controller.py             # 中央编排控制器
 │       │
 │       │   # === CLI 层 ===
-│       └── cli.py                    # cc-agent 命令行入口
+│       ├── cli.py                    # cc-agent 命令行入口
+│       └── _skill_doc.py            # AI 智能体技能参考文档
 │
 └── tests/                            # 1:1 映射测试文件
 ```
@@ -486,6 +487,10 @@ cc-agent message read [--agent <name>]
 
 # 状态
 cc-agent status                    # 综合状态（团队+Agent+任务）
+
+# 技能参考（无需 --team-name）
+cc-agent skill                     # Markdown 格式
+cc-agent --json skill              # JSON 结构化格式
 ```
 
 ### 9.2 实现选择

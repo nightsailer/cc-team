@@ -14,6 +14,7 @@ Compatible with the [Claude Code](https://docs.anthropic.com/en/docs/claude-code
 - **Dual interface** — use as a Python library or via the `cct` CLI
 - **Event-driven** — Node.js-style `AsyncEventEmitter` for reactive programming
 - **File-level locking** — safe concurrent access with `fcntl` async wrappers
+- **Built-in skill reference** — `cct skill` outputs a self-contained command reference for AI agent consumption
 
 ## Installation
 
@@ -117,6 +118,10 @@ cct --team-name my-project message read --agent researcher
 # Check overall status
 cct --team-name my-project status
 
+# Print AI agent skill reference (no --team-name required)
+cct skill
+cct --json skill
+
 # Graceful shutdown
 cct --team-name my-project agent shutdown --name researcher --reason "Done"
 
@@ -153,7 +158,8 @@ cc-team/src/cc_team/
 ├── process_manager.py    # Agent process lifecycle
 ├── agent_handle.py       # Agent proxy object
 ├── controller.py         # Central orchestrator
-└── cli.py                # cct CLI entry point
+├── cli.py                # cct CLI entry point
+└── _skill_doc.py         # AI agent skill reference document
 ```
 
 **Layer dependencies (top → bottom):**

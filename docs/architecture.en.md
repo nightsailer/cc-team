@@ -89,7 +89,8 @@ cc-team/
 │       ├── controller.py             # Central orchestration controller
 │       │
 │       │   # === CLI Layer ===
-│       └── cli.py                    # cc-agent CLI entry point
+│       ├── cli.py                    # cc-agent CLI entry point
+│       └── _skill_doc.py            # AI agent skill reference document
 │
 └── tests/                            # 1:1 mapped test files
 ```
@@ -486,6 +487,10 @@ cc-agent message read [--agent <name>]
 
 # Status
 cc-agent status                    # Combined status (team + agents + tasks)
+
+# Skill reference (no --team-name required)
+cc-agent skill                     # Markdown format
+cc-agent --json skill              # JSON structured format
 ```
 
 ### 9.2 Implementation Choice

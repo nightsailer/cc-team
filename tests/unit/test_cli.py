@@ -291,3 +291,50 @@ class TestJsonOutput:
         captured = capsys.readouterr()
         data = json.loads(captured.out)
         assert isinstance(data, list)
+
+
+# ── skill 命令 ─────────────────────────────────────────────
+
+
+class TestSkillCommand:
+    """skill subcommand tests."""
+
+    @pytest.mark.asyncio
+    async def test_skill_markdown_output(
+        self, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """skill outputs Markdown reference document."""
+        parser = _build_parser()
+        args = parser.parse_args(["skill"])
+        await args.func(args)
+        captured = capsys.readouterr()
+        assert "# cct Skill Reference" in captured.out
+        assert "team create" in captured.out
+
+    @pytest.mark.asyncio
+    async def test_skill_json_output(
+        self, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """--json skill outputs structured JSON with version and sections."""
+        parser = _build_parser()
+        args = parser.parse_args(["--json", "skill"])
+        await args.func(args)
+        captured = capsys.readouterr()
+        data = json.loads(captured.out)
+        assert "version" in data
+        assert "sections" in data
+        assert isinstance(data["sections"], list)
+        assert len(data["sections"]) > 0
+        # Every section has title and content
+        for section in data["sections"]:
+            assert "title" in section
+            assert "content" in section
+
+    def test_skill_no_team_name_required(self) -> None:
+        """skill must work without --team-name."""
+        parser = _build_parser()
+        args = parser.parse_args(["skill"])
+        # Should have func set (not fall through to help)
+        assert hasattr(args, "func")
+        # team_name should be None (not required)
+        assert args.team_name is None
