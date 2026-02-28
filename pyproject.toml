@@ -1,0 +1,31 @@
+[project]
+name = "cc-team"
+version = "0.1.0"
+description = "Python library + CLI for Claude Code multi-agent team orchestration"
+requires-python = ">=3.10"
+dependencies = []
+license = "MIT"
+
+[project.scripts]
+cct = "cc_team.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cc_team"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[dependency-groups]
+dev = ["pytest", "pytest-asyncio", "ruff"]
