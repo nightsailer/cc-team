@@ -20,7 +20,7 @@ import json
 import os
 import tempfile
 import time
-from dataclasses import asdict, fields
+from dataclasses import fields
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TypeVar
@@ -126,29 +126,34 @@ _PERMISSION_SNAKE_FIELDS: set[str] = {
 
 
 def to_json_dict(obj: Any, *, cls: type | None = None) -> dict[str, Any]:
-    """将 dataclass 实例转为 JSON 兼容 dict（camelCase key）。
+    """Convert a dataclass instance to a JSON-compatible dict (camelCase keys).
+
+    Uses manual fields() iteration instead of asdict() to preserve nested
+    dataclass instances for correct recursive camelCase key mapping.
 
     Args:
-        obj: dataclass 实例
-        cls: 可选，指定类型用于判断命名规则
+        obj: dataclass instance
+        cls: optional type override for naming-rule detection
 
     Returns:
-        JSON 兼容的 dict
+        JSON-compatible dict
     """
     actual_cls = cls or type(obj)
     is_permission = actual_cls in _PERMISSION_TYPES
-    raw = asdict(obj)
     result: dict[str, Any] = {}
 
-    for key, value in raw.items():
-        # 跳过值为 None 的可选字段
+    for f in fields(obj):
+        value = getattr(obj, f.name)
+
         if value is None:
             continue
 
-        json_key = _to_json_key(key, is_permission=is_permission)
+        json_key = _to_json_key(f.name, is_permission=is_permission)
 
-        # 递归处理嵌套 dataclass（如 TeamConfig.members）
-        if isinstance(value, list) and value and hasattr(value[0], "__dataclass_fields__"):
+        # Recursively handle nested dataclass
+        if hasattr(value, "__dataclass_fields__"):
+            value = to_json_dict(value)
+        elif isinstance(value, list) and value and hasattr(value[0], "__dataclass_fields__"):
             value = [to_json_dict(item) for item in value]
 
         result[json_key] = value
@@ -314,6 +319,7 @@ def atomic_write_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
     try:
+        os.fchmod(fd, 0o644)  # Match Claude Code native permissions
         with os.fdopen(fd, "w") as f:
             json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
             f.flush()
@@ -386,10 +392,16 @@ def team_config_from_dict(data: dict[str, Any]) -> TeamConfig:
 
 
 def task_file_to_dict(task: TaskFile) -> dict[str, Any]:
-    """TaskFile → JSON dict。"""
+    """TaskFile → JSON dict.
+
+    Omits empty activeForm and metadata to match native Claude Code protocol.
+    """
     result = to_json_dict(task)
-    # owner 为 None 时不输出（协议中 undefined）
-    # metadata 为空 dict 时仍输出
+    # Protocol: omit when not meaningfully set
+    if result.get("activeForm") == "":
+        del result["activeForm"]
+    if result.get("metadata") == {}:
+        del result["metadata"]
     return result
 
 

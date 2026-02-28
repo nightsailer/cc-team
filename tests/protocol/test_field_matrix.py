@@ -86,12 +86,11 @@ class TestTaskFieldMatrix:
         d = task_file_to_dict(task)
         assert "owner" not in d
 
-    def test_new_task_has_empty_metadata(self) -> None:
-        """metadata 为空 dict 时仍输出。"""
+    def test_new_task_omits_empty_metadata(self) -> None:
+        """Empty metadata is omitted to match native Claude Code protocol."""
         task = TaskFile(id="1", subject="S", description="D")
         d = task_file_to_dict(task)
-        assert "metadata" in d
-        assert d["metadata"] == {}
+        assert "metadata" not in d
 
     def test_assigned_task_has_owner(self) -> None:
         task = TaskFile(id="1", subject="S", description="D", owner="worker")

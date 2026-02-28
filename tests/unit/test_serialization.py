@@ -107,7 +107,7 @@ class TestJsonDictConversion:
         assert d["blocks"] == []
 
     def test_empty_dict_included(self) -> None:
-        """空 dict (metadata) 仍然输出。"""
+        """Empty dict (metadata) still present in raw to_json_dict output."""
         task = TaskFile(id="1", subject="S", description="D")
         d = to_json_dict(task)
         assert "metadata" in d
@@ -149,7 +149,7 @@ class TestJsonDictConversion:
         assert task.id == "1"
 
     def test_nested_members_roundtrip(self) -> None:
-        """TeamConfig 内嵌 TeamMember 列表的嵌套转换。"""
+        """TeamConfig nested TeamMember list roundtrip conversion."""
         config = TeamConfig(
             name="t",
             description="d",
@@ -168,6 +168,63 @@ class TestJsonDictConversion:
         restored = team_config_from_dict(d)
         assert len(restored.members) == 1
         assert restored.members[0].agent_id == "team-lead@t"
+
+    def test_nested_members_camel_case_keys(self) -> None:
+        """P0-a regression: nested members must use camelCase keys."""
+        config = TeamConfig(
+            name="t",
+            description="d",
+            created_at=1000,
+            lead_agent_id="team-lead@t",
+            lead_session_id="uuid",
+            members=[
+                TeamMember(
+                    agent_id="worker@t", name="worker",
+                    agent_type="general-purpose", model="sonnet",
+                    joined_at=2000, tmux_pane_id="%5", cwd="/home",
+                    is_active=True, backend_type="tmux",
+                ),
+            ],
+        )
+        d = team_config_to_dict(config)
+        member_dict = d["members"][0]
+        # Must be camelCase, not snake_case
+        assert "agentId" in member_dict
+        assert "agent_id" not in member_dict
+        assert "agentType" in member_dict
+        assert "agent_type" not in member_dict
+        assert "joinedAt" in member_dict
+        assert "joined_at" not in member_dict
+        assert "tmuxPaneId" in member_dict
+        assert "tmux_pane_id" not in member_dict
+        assert "isActive" in member_dict
+        assert "is_active" not in member_dict
+        assert "backendType" in member_dict
+        assert "backend_type" not in member_dict
+
+    def test_team_lead_member_no_null_fields(self) -> None:
+        """P1 regression: team-lead member must NOT contain teammate-only fields."""
+        config = TeamConfig(
+            name="t",
+            description="d",
+            created_at=1000,
+            lead_agent_id="team-lead@t",
+            lead_session_id="uuid",
+            members=[
+                TeamMember(
+                    agent_id="team-lead@t", name="team-lead",
+                    agent_type="team-lead", model="m",
+                    joined_at=1000, tmux_pane_id="", cwd="/",
+                    # prompt, color, plan_mode_required, backend_type, is_active
+                    # are all None by default
+                ),
+            ],
+        )
+        d = team_config_to_dict(config)
+        member_dict = d["members"][0]
+        # None fields must be omitted entirely, not serialized as null
+        for key in ("prompt", "color", "planModeRequired", "backendType", "isActive"):
+            assert key not in member_dict, f"Unexpected key '{key}' in team-lead member"
 
 
 # ── InboxMessage 特殊序列化 ─────────────────────────────────
@@ -316,11 +373,18 @@ class TestAtomicWriteJson:
         assert " " not in content  # 紧凑格式无空格
 
     def test_write_no_temp_files_remain(self, tmp_path: Path) -> None:
-        """成功写入后不留临时文件。"""
+        """No temp files remain after successful write."""
         target = tmp_path / "clean.json"
         atomic_write_json(target, {"ok": True})
         tmp_files = list(tmp_path.glob("*.tmp"))
         assert len(tmp_files) == 0
+
+    def test_write_permissions_644(self, tmp_path: Path) -> None:
+        """P2 regression: created files must have 0o644 permissions."""
+        target = tmp_path / "perms.json"
+        atomic_write_json(target, {"key": "value"})
+        mode = target.stat().st_mode & 0o777
+        assert mode == 0o644, f"Expected 0o644, got {oct(mode)}"
 
 
 # ── 带重试读取 ──────────────────────────────────────────────
@@ -397,6 +461,30 @@ class TestTaskFileSerialization:
         assert "activeForm" in d
         assert "blockedBy" in d
         assert "active_form" not in d
+
+    def test_empty_active_form_omitted(self) -> None:
+        """P3 regression: empty activeForm must be omitted from task dict."""
+        task = TaskFile(id="1", subject="S", description="D")
+        d = task_file_to_dict(task)
+        assert "activeForm" not in d
+
+    def test_empty_metadata_omitted(self) -> None:
+        """P3 regression: empty metadata must be omitted from task dict."""
+        task = TaskFile(id="1", subject="S", description="D")
+        d = task_file_to_dict(task)
+        assert "metadata" not in d
+
+    def test_non_empty_active_form_kept(self) -> None:
+        """Non-empty activeForm is preserved."""
+        task = TaskFile(id="1", subject="S", description="D", active_form="Working")
+        d = task_file_to_dict(task)
+        assert d["activeForm"] == "Working"
+
+    def test_non_empty_metadata_kept(self) -> None:
+        """Non-empty metadata is preserved."""
+        task = TaskFile(id="1", subject="S", description="D", metadata={"k": "v"})
+        d = task_file_to_dict(task)
+        assert d["metadata"] == {"k": "v"}
 
     def test_roundtrip(self) -> None:
         original = TaskFile(
