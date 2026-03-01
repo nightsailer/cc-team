@@ -22,7 +22,9 @@ import argparse
 import asyncio
 import contextlib
 import json
+import os
 import sys
+import uuid
 from typing import Any
 
 # ── 输出辅助 ──────────────────────────────────────────────
@@ -57,7 +59,11 @@ async def _cmd_team_create(args: argparse.Namespace) -> None:
     name = args.name or _require_team(args)
     mgr = TeamManager(name)
     try:
-        config = await mgr.create(description=args.description)
+        config = await mgr.create(
+            description=args.description,
+            lead_session_id=str(uuid.uuid4()),
+            cwd=os.getcwd(),
+        )
     except TeamAlreadyExistsError:
         _error(f"Team '{name}' already exists. Destroy it first or use a different name.")
         sys.exit(1)
@@ -119,11 +125,14 @@ async def _cmd_agent_spawn(args: argparse.Namespace) -> None:
         _error(f"Team '{team}' not found. Create it first with: cct team create")
         sys.exit(1)
 
+    agent_cwd = args.cwd if hasattr(args, "cwd") and args.cwd else os.getcwd()
+
     options = SpawnAgentOptions(
         name=args.name,
         prompt=args.prompt,
         agent_type=args.type,
         model=args.model,
+        cwd=agent_cwd,
     )
 
     # 1. 分配颜色 + 注册成员
@@ -135,7 +144,7 @@ async def _cmd_agent_spawn(args: argparse.Namespace) -> None:
         model=options.model,
         joined_at=now_ms(),
         tmux_pane_id="",
-        cwd=args.cwd if hasattr(args, "cwd") and args.cwd else "",
+        cwd=agent_cwd,
         prompt=options.prompt,
         color=color,
         plan_mode_required=options.plan_mode_required,

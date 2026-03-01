@@ -81,7 +81,7 @@ class TestSpawn:
 
     @pytest.mark.asyncio
     async def test_spawn_calls_split_then_send(self) -> None:
-        """spawn 先 split_window 再 send_command。"""
+        """spawn calls split_window then send_command."""
         tmux = _make_mock_tmux()
         pm = ProcessManager(tmux=tmux)
 
@@ -94,6 +94,74 @@ class TestSpawn:
 
         tmux.split_window.assert_awaited_once()
         tmux.send_command.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_spawn_command_includes_team_env_vars(self) -> None:
+        """P0-b regression: spawn command must include CLAUDECODE and AGENT_TEAMS env vars."""
+        tmux = _make_mock_tmux()
+        pm = ProcessManager(tmux=tmux)
+
+        await pm.spawn(
+            _make_options(),
+            team_name="t",
+            color="blue",
+            parent_session_id="s",
+        )
+
+        command = tmux.send_command.call_args[0][1]
+        assert "CLAUDECODE=1" in command
+        assert "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1" in command
+
+    @pytest.mark.asyncio
+    async def test_spawn_command_includes_cd_prefix(self) -> None:
+        """P0-b regression: spawn command must cd into cwd before launching."""
+        tmux = _make_mock_tmux()
+        pm = ProcessManager(tmux=tmux)
+
+        await pm.spawn(
+            _make_options(cwd="/projects/my-app"),
+            team_name="t",
+            color="blue",
+            parent_session_id="s",
+        )
+
+        command = tmux.send_command.call_args[0][1]
+        assert command.startswith("cd /projects/my-app && ")
+
+    @pytest.mark.asyncio
+    async def test_spawn_command_cd_before_env_vars(self) -> None:
+        """cd prefix must appear before env vars in spawn command."""
+        tmux = _make_mock_tmux()
+        pm = ProcessManager(tmux=tmux)
+
+        await pm.spawn(
+            _make_options(cwd="/work"),
+            team_name="t",
+            color="blue",
+            parent_session_id="s",
+        )
+
+        command = tmux.send_command.call_args[0][1]
+        cd_pos = command.index("cd ")
+        env_pos = command.index("CLAUDECODE=1")
+        assert cd_pos < env_pos
+
+    @pytest.mark.asyncio
+    async def test_spawn_command_cwd_defaults_to_getcwd(self) -> None:
+        """When cwd is empty, spawn should use os.getcwd() as fallback."""
+        tmux = _make_mock_tmux()
+        pm = ProcessManager(tmux=tmux)
+
+        with patch("cc_team.process_manager.os.getcwd", return_value="/fallback/dir"):
+            await pm.spawn(
+                _make_options(cwd=""),
+                team_name="t",
+                color="blue",
+                parent_session_id="s",
+            )
+
+        command = tmux.send_command.call_args[0][1]
+        assert command.startswith("cd /fallback/dir && ")
 
     @pytest.mark.asyncio
     async def test_spawn_split_failure_raises_spawn_error(self) -> None:

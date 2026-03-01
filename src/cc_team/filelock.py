@@ -69,6 +69,11 @@ class FileLock:
                 with suppress(OSError):
                     fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
                 fd.close()
+                # Remove lock file after release to avoid conflicting with
+                # Claude Code's proper-lockfile which treats stale .lock files
+                # as held locks, preventing inbox read writeback.
+                with suppress(OSError):
+                    self._path.unlink()
 
     async def _try_lock(self, fd: object) -> None:
         """带指数退避的锁获取尝试。"""

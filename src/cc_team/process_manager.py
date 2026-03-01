@@ -66,14 +66,21 @@ class ProcessManager:
         except TmuxError as e:
             raise SpawnError(f"Failed to create tmux pane: {e}") from e
 
-        # 构建 CLI 命令
+        # Build CLI command with required env vars for team protocol activation.
+        # Without these, Claude Code won't initialize inbox read/write logic.
         cli_args = self.build_cli_args(
             options,
             team_name=team_name,
             color=color,
             parent_session_id=parent_session_id,
         )
-        command = shlex.join(cli_args)
+        # cd into agent cwd before launching — matches vendor spawn behavior.
+        agent_cwd = shlex.quote(options.cwd or os.getcwd())
+        command = (
+            f"cd {agent_cwd} && "
+            "CLAUDECODE=1 CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 "
+            + shlex.join(cli_args)
+        )
 
         try:
             await self._tmux.send_command(pane_id, command)

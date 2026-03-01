@@ -271,6 +271,7 @@ class SpawnAgentOptions:
     prompt: str  # 初始指令
     agent_type: str = "general-purpose"  # Agent 类型
     model: str = "claude-sonnet-4-6"  # LLM 模型
+    cwd: str = ""  # Working directory (defaults to os.getcwd() at spawn time)
     plan_mode_required: bool = False  # 是否强制 plan 模式
     permission_mode: PermissionMode | None = None  # 权限模式
     allowed_tools: list[str] | None = None  # 工具白名单
