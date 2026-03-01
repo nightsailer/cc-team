@@ -251,18 +251,28 @@ class TestMessages:
 
     @pytest.mark.asyncio
     async def test_send_message(self, ctrl: Controller) -> None:
-        """send_message 写入 inbox。"""
+        """send_message writes to inbox for a registered member."""
         await ctrl.init()
+        await ctrl.spawn(SpawnAgentOptions(name="agent-1", prompt="hi"))
         await ctrl.send_message("agent-1", "Hello", summary="Hi")
 
         inbox_path = paths_mod.inbox_path("test-team", "agent-1")
         msgs = json.loads(inbox_path.read_text())
-        assert msgs[0]["text"] == "Hello"
+        # First message is the spawn prompt, second is our "Hello"
+        assert any(m["text"] == "Hello" for m in msgs)
+        await ctrl.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_send_message_to_nonexistent_raises(self, ctrl: Controller) -> None:
+        """P5 regression: send_message to nonexistent member raises AgentNotFoundError."""
+        await ctrl.init()
+        with pytest.raises(AgentNotFoundError):
+            await ctrl.send_message("ghost", "Hello")
         await ctrl.shutdown()
 
     @pytest.mark.asyncio
     async def test_send_message_before_init(self, ctrl: Controller) -> None:
-        """未初始化时 send_message 抛出异常。"""
+        """send_message before init raises NotInitializedError."""
         with pytest.raises(NotInitializedError):
             await ctrl.send_message("a", "hi")
 
@@ -418,12 +428,12 @@ class TestSpawnRollback:
         """进程启动失败时，注册的成员应被移除。"""
         await ctrl.init()
 
-        # 让 process_manager.spawn 抛出异常
-        ctrl.process_manager._tmux.split_window = AsyncMock(
-            side_effect=Exception("tmux dead")
+        # Mock spawn at the AgentBackend protocol level
+        ctrl._process_manager.spawn = AsyncMock(  # type: ignore[method-assign]
+            side_effect=Exception("backend dead")
         )
 
-        with pytest.raises(Exception, match="tmux dead"):
+        with pytest.raises(Exception, match="backend dead"):
             await ctrl.spawn(SpawnAgentOptions(name="doomed", prompt="hi"))
 
         # 成员不应留在 config.json
@@ -436,8 +446,8 @@ class TestSpawnRollback:
         """进程启动失败后，handles 中不应有残留。"""
         await ctrl.init()
 
-        ctrl.process_manager._tmux.split_window = AsyncMock(
-            side_effect=RuntimeError("no tmux")
+        ctrl._process_manager.spawn = AsyncMock(  # type: ignore[method-assign]
+            side_effect=RuntimeError("no backend")
         )
 
         with pytest.raises(RuntimeError):
@@ -471,11 +481,11 @@ class TestShutdownApproved:
         """shutdown:approved 应 untrack 进程。"""
         await ctrl.init()
         await ctrl.spawn(SpawnAgentOptions(name="worker", prompt="hi"))
-        assert ctrl.process_manager.get_pane_id("worker") is not None
+        assert "worker" in ctrl.process_manager.tracked_agents()
 
         await ctrl.emit("shutdown:approved", "worker", {})
 
-        assert ctrl.process_manager.get_pane_id("worker") is None
+        assert "worker" not in ctrl.process_manager.tracked_agents()
         await ctrl.shutdown()
 
     @pytest.mark.asyncio

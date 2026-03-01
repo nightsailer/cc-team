@@ -26,7 +26,7 @@ AgentType = Literal["general-purpose", "Explore", "Plan", "Bash", "team-lead"]
 # team-lead agent type 常量，避免散布裸字符串
 TEAM_LEAD_AGENT_TYPE: AgentType = "team-lead"
 
-BackendType = Literal["tmux", "in-process"]
+BackendType = Literal["tmux", "in-process", "agent-sdk"]
 
 AgentColor = Literal["blue", "green", "yellow", "purple", "orange", "pink", "cyan", "red"]
 
@@ -257,6 +257,58 @@ class AgentController(Protocol):
 
     def is_agent_running(self, agent_name: str) -> bool:
         """检查 Agent 是否存活。"""
+        ...
+
+
+@runtime_checkable
+class AgentBackend(Protocol):
+    """Backend abstraction for agent process lifecycle and input delivery.
+
+    Implementations:
+    - ProcessManager (tmux): split-window + send-keys
+    - Future agent-sdk backend: SDK API + stdin JSON stream
+    """
+
+    async def spawn(
+        self,
+        options: SpawnAgentOptions,
+        *,
+        team_name: str,
+        color: str,
+        parent_session_id: str,
+    ) -> str:
+        """Spawn an agent process. Returns a backend-specific identifier."""
+        ...
+
+    async def kill(self, agent_name: str) -> None:
+        """Force-kill an agent process.
+
+        Raises:
+            AgentNotFoundError: agent is not tracked.
+        """
+        ...
+
+    def untrack(self, agent_name: str) -> None:
+        """Remove agent from tracking (called when agent exits gracefully)."""
+        ...
+
+    async def is_running(self, agent_name: str) -> bool:
+        """Check whether an agent process is alive."""
+        ...
+
+    def tracked_agents(self) -> list[str]:
+        """Return names of all tracked agents."""
+        ...
+
+    async def send_input(self, agent_name: str, text: str) -> None:
+        """Deliver input to an agent.
+
+        tmux: send-keys to pane.
+        agent-sdk: write JSON to stdin stream.
+
+        Raises:
+            AgentNotFoundError: agent is not tracked.
+        """
         ...
 
 

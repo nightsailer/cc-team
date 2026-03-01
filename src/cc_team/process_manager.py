@@ -93,6 +93,15 @@ class ProcessManager:
         self._panes[options.name] = pane_id
         return pane_id
 
+    # ── Internal Helpers ──────────────────────────────────────
+
+    def _require_pane(self, agent_name: str) -> str:
+        """Look up pane ID for *agent_name*, raise if not tracked."""
+        pane_id = self._panes.get(agent_name)
+        if pane_id is None:
+            raise AgentNotFoundError(agent_name)
+        return pane_id
+
     # ── 终止 ────────────────────────────────────────────────
 
     async def kill(self, agent_name: str) -> None:
@@ -101,9 +110,7 @@ class ProcessManager:
         Raises:
             AgentNotFoundError: Agent 不在追踪列表中
         """
-        pane_id = self._panes.get(agent_name)
-        if pane_id is None:
-            raise AgentNotFoundError(agent_name)
+        pane_id = self._require_pane(agent_name)
 
         with contextlib.suppress(TmuxError):
             await self._tmux.kill_pane(pane_id)
@@ -130,6 +137,17 @@ class ProcessManager:
     def tracked_agents(self) -> list[str]:
         """返回所有被追踪的 Agent 名称。"""
         return list(self._panes.keys())
+
+    # ── Input Delivery ──────────────────────────────────────
+
+    async def send_input(self, agent_name: str, text: str) -> None:
+        """Send input text to an agent's tmux pane.
+
+        Raises:
+            AgentNotFoundError: agent is not tracked.
+        """
+        pane_id = self._require_pane(agent_name)
+        await self._tmux.send_command(pane_id, text)
 
     # ── CLI 参数构建 ────────────────────────────────────────
 

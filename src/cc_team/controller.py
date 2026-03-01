@@ -29,6 +29,7 @@ from cc_team.process_manager import ProcessManager
 from cc_team.task_manager import TaskManager
 from cc_team.team_manager import TeamManager
 from cc_team.types import (
+    AgentBackend,
     ControllerOptions,
     SpawnAgentOptions,
     TaskFile,
@@ -65,7 +66,7 @@ class Controller(AsyncEventEmitter):
         self,
         options: ControllerOptions,
         *,
-        process_manager: ProcessManager | None = None,
+        process_manager: AgentBackend | None = None,
     ) -> None:
         super().__init__()
         self._options = options
@@ -74,7 +75,7 @@ class Controller(AsyncEventEmitter):
         # 子系统
         self._team_manager = TeamManager(options.team_name)
         self._task_manager = TaskManager(options.team_name)
-        self._process_manager = process_manager or ProcessManager()
+        self._process_manager: AgentBackend = process_manager or ProcessManager()
         self._message_builder = MessageBuilder(options.team_name)
         self._event_router = EventRouter(self)
         self._poller: InboxPoller | None = None
@@ -100,7 +101,7 @@ class Controller(AsyncEventEmitter):
         return self._task_manager
 
     @property
-    def process_manager(self) -> ProcessManager:
+    def process_manager(self) -> AgentBackend:
         return self._process_manager
 
     # ── 生命周期 ────────────────────────────────────────────
@@ -247,8 +248,14 @@ class Controller(AsyncEventEmitter):
     async def send_message(
         self, recipient: str, content: str, *, summary: str | None = None
     ) -> None:
-        """发送消息到指定 Agent。"""
+        """Send a message to a specific agent.
+
+        Raises:
+            AgentNotFoundError: recipient is not a registered team member.
+        """
         self._check_initialized()
+        if self._team_manager.get_member(recipient) is None:
+            raise AgentNotFoundError(recipient)
         await self._message_builder.send_plain(
             recipient, content, summary=summary,
         )

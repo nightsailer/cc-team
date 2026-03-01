@@ -25,7 +25,10 @@ import json
 import os
 import sys
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from cc_team.types import TeamMember
 
 # ── 输出辅助 ──────────────────────────────────────────────
 
@@ -47,6 +50,18 @@ def _require_team(args: argparse.Namespace) -> str:
         _error("--team-name is required")
         sys.exit(1)
     return name
+
+
+def _require_member(team: str, name: str) -> TeamMember:
+    """Validate that *name* is a registered member of *team*, exit 1 if not."""
+    from cc_team.team_manager import TeamManager
+
+    mgr = TeamManager(team)
+    member = mgr.get_member(name)
+    if member is None:
+        _error(f"Member '{name}' not found in team '{team}'")
+        sys.exit(1)
+    return member
 
 
 # ── team 子命令 ───────────────────────────────────────────
@@ -204,14 +219,8 @@ async def _cmd_agent_list(args: argparse.Namespace) -> None:
 
 
 async def _cmd_agent_status(args: argparse.Namespace) -> None:
-    from cc_team.team_manager import TeamManager
-
     team = _require_team(args)
-    mgr = TeamManager(team)
-    member = mgr.get_member(args.name)
-    if member is None:
-        _error(f"Agent '{args.name}' not found in team '{team}'")
-        sys.exit(1)
+    member = _require_member(team, args.name)
     if args.use_json:
         from cc_team._serialization import to_json_dict
         _json_out(to_json_dict(member))
@@ -228,6 +237,7 @@ async def _cmd_agent_shutdown(args: argparse.Namespace) -> None:
     from cc_team.message_builder import MessageBuilder
 
     team = _require_team(args)
+    _require_member(team, args.name)
     builder = MessageBuilder(team)
     req_id = await builder.send_shutdown_request(args.name, args.reason)
     if args.use_json:
@@ -242,8 +252,6 @@ async def _cmd_agent_kill(args: argparse.Namespace) -> None:
 
     team = _require_team(args)
     mgr = TeamManager(team)
-
-    # 查找成员获取 pane_id
     member = mgr.get_member(args.name)
     if member is None:
         _error(f"Agent '{args.name}' not found in team '{team}'")
@@ -345,6 +353,7 @@ async def _cmd_msg_send(args: argparse.Namespace) -> None:
     from cc_team.message_builder import MessageBuilder
 
     team = _require_team(args)
+    _require_member(team, args.to)
     builder = MessageBuilder(team)
     await builder.send_plain(args.to, args.content, summary=args.summary)
     if args.use_json:

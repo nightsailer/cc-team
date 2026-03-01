@@ -27,6 +27,7 @@ from cc_team.team_manager import TeamManager
 from cc_team.tmux import ClearMode, PaneState
 from cc_team.types import (
     AGENT_COLORS,
+    AgentBackend,
     AgentColor,
     AgentController,
     AgentType,
@@ -53,6 +54,7 @@ __all__ = [
     "InboxPoller",
     "MessageBuilder",
     # Types
+    "AgentBackend",
     "TeamConfig",
     "TeamMember",
     "InboxMessage",

@@ -20,7 +20,7 @@ import pytest
 from cc_team.exceptions import AgentNotFoundError, SpawnError, TmuxError
 from cc_team.process_manager import ProcessManager, _find_claude_binary
 from cc_team.tmux import TmuxManager
-from cc_team.types import SpawnAgentOptions
+from cc_team.types import AgentBackend, SpawnAgentOptions
 
 # ── Mock Helpers ──────────────────────────────────────────────
 
@@ -472,3 +472,42 @@ class TestFindClaudeBinary:
         monkeypatch.delenv("CC_TEAM_CLAUDE_BIN", raising=False)
         with patch("cc_team.process_manager.shutil.which", return_value=None):
             assert _find_claude_binary() == "claude"
+
+
+# ── send_input ──────────────────────────────────────────────
+
+
+class TestSendInput:
+    """send_input() tests."""
+
+    @pytest.mark.asyncio
+    async def test_send_input_delegates_to_tmux(self) -> None:
+        """send_input forwards text to tmux send_command."""
+        tmux = _make_mock_tmux()
+        pm = ProcessManager(tmux=tmux)
+        await pm.spawn(
+            _make_options(name="dev"),
+            team_name="t", color="blue", parent_session_id="s",
+        )
+
+        await pm.send_input("dev", "hello world")
+        tmux.send_command.assert_awaited_with("%20", "hello world")
+
+    @pytest.mark.asyncio
+    async def test_send_input_untracked_raises(self) -> None:
+        """send_input to untracked agent raises AgentNotFoundError."""
+        pm = ProcessManager(tmux=_make_mock_tmux())
+        with pytest.raises(AgentNotFoundError):
+            await pm.send_input("nobody", "hello")
+
+
+# ── Protocol Compatibility ──────────────────────────────────
+
+
+class TestProtocolCompatibility:
+    """ProcessManager must satisfy AgentBackend Protocol."""
+
+    def test_isinstance_check(self) -> None:
+        """ProcessManager is a runtime-checkable AgentBackend."""
+        pm = ProcessManager(tmux=_make_mock_tmux())
+        assert isinstance(pm, AgentBackend)
