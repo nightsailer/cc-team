@@ -88,6 +88,7 @@ async def _cmd_team_create(args: argparse.Namespace) -> None:
         sys.exit(1)
     if args.use_json:
         from cc_team._serialization import team_config_to_dict
+
         _json_out(team_config_to_dict(config))
     else:
         print(f"Team '{config.name}' created.")
@@ -104,6 +105,7 @@ async def _cmd_team_info(args: argparse.Namespace) -> None:
         sys.exit(1)
     if args.use_json:
         from cc_team._serialization import team_config_to_dict
+
         _json_out(team_config_to_dict(config))
     else:
         print(f"Team: {config.name}")
@@ -183,7 +185,10 @@ async def _cmd_team_takeover(args: argparse.Namespace) -> None:
                 print(f"Warning: overriding existing TL in pane {lead.tmux_pane_id}")
 
     backend_id, new_sid = await _spawn_new_lead(
-        mgr, name, args.model, getattr(args, "backend_id", None),
+        mgr,
+        name,
+        args.model,
+        getattr(args, "backend_id", None),
     )
 
     if args.use_json:
@@ -220,12 +225,14 @@ async def _cmd_team_relay(args: argparse.Namespace) -> None:
     new_bid, new_sid = await _spawn_new_lead(mgr, name, args.model)
 
     if args.use_json:
-        _json_out({
-            "old_session": old_session,
-            "new_session": new_sid,
-            "old_backend_id": lead.tmux_pane_id if lead else "",
-            "new_backend_id": new_bid,
-        })
+        _json_out(
+            {
+                "old_session": old_session,
+                "new_session": new_sid,
+                "old_backend_id": lead.tmux_pane_id if lead else "",
+                "new_backend_id": new_bid,
+            }
+        )
     else:
         print("Relay complete:")
         print(f"  Old session: {old_session}")
@@ -271,11 +278,13 @@ async def _cmd_agent_register(args: argparse.Namespace) -> None:
     )
 
     if args.use_json:
-        _json_out({
-            "name": member.name,
-            "color": member.color,
-            "active": member.is_active,
-        })
+        _json_out(
+            {
+                "name": member.name,
+                "color": member.color,
+                "active": member.is_active,
+            }
+        )
     else:
         print(f"Agent '{member.name}' registered (color={member.color})")
 
@@ -308,16 +317,15 @@ async def _cmd_agent_spawn(args: argparse.Namespace) -> None:
     )
 
     if args.use_json:
-        _json_out({
-            "name": options.name,
-            "backend_id": backend_id,
-            "color": color or "",
-        })
-    else:
-        print(
-            f"Agent '{options.name}' spawned "
-            f"(backend={backend_id}, color={color or ''})"
+        _json_out(
+            {
+                "name": options.name,
+                "backend_id": backend_id,
+                "color": color or "",
+            }
         )
+    else:
+        print(f"Agent '{options.name}' spawned (backend={backend_id}, color={color or ''})")
 
 
 async def _cmd_agent_list(args: argparse.Namespace) -> None:
@@ -327,11 +335,18 @@ async def _cmd_agent_list(args: argparse.Namespace) -> None:
     mgr = TeamManager(team)
     members = mgr.list_teammates()
     if args.use_json:
-        _json_out([
-            {"name": m.name, "type": m.agent_type, "model": m.model,
-             "color": m.color, "active": m.is_active}
-            for m in members
-        ])
+        _json_out(
+            [
+                {
+                    "name": m.name,
+                    "type": m.agent_type,
+                    "model": m.model,
+                    "color": m.color,
+                    "active": m.is_active,
+                }
+                for m in members
+            ]
+        )
     else:
         if not members:
             print("(no agents)")
@@ -347,6 +362,7 @@ async def _cmd_agent_status(args: argparse.Namespace) -> None:
     member = _require_member(team, args.name)
     if args.use_json:
         from cc_team._serialization import to_json_dict
+
         _json_out(to_json_dict(member))
     else:
         print(f"Name:   {member.name}")
@@ -445,6 +461,7 @@ async def _cmd_task_create(args: argparse.Namespace) -> None:
     )
     if args.use_json:
         from cc_team._serialization import task_file_to_dict
+
         _json_out(task_file_to_dict(task))
     else:
         print(f"Task #{task.id} created: {task.subject}")
@@ -458,6 +475,7 @@ async def _cmd_task_list(args: argparse.Namespace) -> None:
     tasks = mgr.list_all()
     if args.use_json:
         from cc_team._serialization import task_file_to_dict
+
         _json_out([task_file_to_dict(t) for t in tasks])
     else:
         if not tasks:
@@ -488,6 +506,7 @@ async def _cmd_task_update(args: argparse.Namespace) -> None:
     task = await mgr.update(args.id, **kwargs)
     if args.use_json:
         from cc_team._serialization import task_file_to_dict
+
         _json_out(task_file_to_dict(task))
     else:
         print(f"Task #{task.id} updated: status={task.status}, owner={task.owner or '-'}")
@@ -501,6 +520,7 @@ async def _cmd_task_complete(args: argparse.Namespace) -> None:
     task = await mgr.update(args.id, status="completed")
     if args.use_json:
         from cc_team._serialization import task_file_to_dict
+
         _json_out(task_file_to_dict(task))
     else:
         print(f"Task #{task.id} completed.")
@@ -549,6 +569,7 @@ async def _cmd_msg_read(args: argparse.Namespace) -> None:
     messages = inbox.read_all() if args.all else inbox.read_unread()
     if args.use_json:
         from cc_team._serialization import inbox_message_to_dict
+
         _json_out([inbox_message_to_dict(m) for m in messages])
     else:
         if not messages:
@@ -582,10 +603,13 @@ async def _cmd_status(args: argparse.Namespace) -> None:
 
     if args.use_json:
         from cc_team._serialization import task_file_to_dict, team_config_to_dict
-        _json_out({
-            "team": team_config_to_dict(config),
-            "tasks": [task_file_to_dict(t) for t in tasks],
-        })
+
+        _json_out(
+            {
+                "team": team_config_to_dict(config),
+                "tasks": [task_file_to_dict(t) for t in tasks],
+            }
+        )
         return
 
     # 团队概览
@@ -618,10 +642,12 @@ async def _cmd_skill(args: argparse.Namespace) -> None:
     from cc_team._skill_doc import SKILL_DOC, SKILL_DOC_VERSION, SKILL_SECTIONS
 
     if args.use_json:
-        _json_out({
-            "version": SKILL_DOC_VERSION,
-            "sections": SKILL_SECTIONS,
-        })
+        _json_out(
+            {
+                "version": SKILL_DOC_VERSION,
+                "sections": SKILL_SECTIONS,
+            }
+        )
     else:
         print(SKILL_DOC)
 
@@ -636,7 +662,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     # 全局选项（dest 避免与 json 模块冲突）
     parser.add_argument(
-        "--team-name", dest="team_name",
+        "--team-name",
+        dest="team_name",
         help="Team name (required for most commands)",
     )
     parser.add_argument("--json", dest="use_json", action="store_true", help="JSON output format")
@@ -685,7 +712,8 @@ def _build_parser() -> argparse.ArgumentParser:
     areg = agent_sub.add_parser("register", help="Register an agent without starting a process")
     areg.add_argument("--name", required=True, help="Agent name")
     areg.add_argument(
-        "--type", default="general-purpose",
+        "--type",
+        default="general-purpose",
         help="Agent type (default: general-purpose)",
     )
     areg.add_argument("--model", default=DEFAULT_MODEL, help="Model ID")
@@ -695,7 +723,8 @@ def _build_parser() -> argparse.ArgumentParser:
     asp.add_argument("--name", required=True, help="Agent name")
     asp.add_argument("--prompt", required=True, help="Initial prompt for the agent")
     asp.add_argument(
-        "--type", default="general-purpose",
+        "--type",
+        default="general-purpose",
         help="Agent type (default: general-purpose)",
     )
     asp.add_argument("--model", default=DEFAULT_MODEL, help="Model ID")
@@ -738,8 +767,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
     tku = task_sub.add_parser("update", help="Update a task")
     tku.add_argument("--id", required=True, help="Task ID")
-    tku.add_argument("--status", choices=["pending", "in_progress", "completed", "deleted"],
-                     help="New status")
+    tku.add_argument(
+        "--status", choices=["pending", "in_progress", "completed", "deleted"], help="New status"
+    )
     tku.add_argument("--owner", help="New owner (empty string to unassign)")
     tku.add_argument("--subject", help="New subject")
     tku.set_defaults(func=_cmd_task_update)
@@ -800,6 +830,7 @@ def main(argv: list[str] | None = None) -> None:
     except Exception as exc:
         if getattr(args, "verbose", False):
             import traceback
+
             traceback.print_exc()
         _error(str(exc))
         sys.exit(1)

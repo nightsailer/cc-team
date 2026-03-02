@@ -331,6 +331,7 @@ class TestAgentControllerProtocol:
             ) -> None: ...
             async def send_shutdown_request(self, agent_name: str, reason: str) -> str:
                 return ""
+
             async def kill_agent(self, agent_name: str) -> None: ...
             def is_agent_running(self, agent_name: str) -> bool:
                 return False

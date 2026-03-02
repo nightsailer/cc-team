@@ -71,9 +71,7 @@ class TestCommunication:
         handle = AgentHandle("worker", ctrl)
         await handle.send("Hello", summary="Greeting")
 
-        ctrl.send_message.assert_awaited_once_with(
-            "worker", "Hello", summary="Greeting"
-        )
+        ctrl.send_message.assert_awaited_once_with("worker", "Hello", summary="Greeting")
 
     @pytest.mark.asyncio
     async def test_send_no_summary(self) -> None:
@@ -82,9 +80,7 @@ class TestCommunication:
         handle = AgentHandle("worker", ctrl)
         await handle.send("Hi")
 
-        ctrl.send_message.assert_awaited_once_with(
-            "worker", "Hi", summary=None
-        )
+        ctrl.send_message.assert_awaited_once_with("worker", "Hi", summary=None)
 
 
 # ── 生命周期 ─────────────────────────────────────────────────

@@ -82,9 +82,7 @@ class TestPollOnce:
         assert messages[0].text == "msg1"
 
     @pytest.mark.asyncio
-    async def test_poll_once_marks_as_read(
-        self, poller: InboxPoller, inbox: InboxIO
-    ) -> None:
+    async def test_poll_once_marks_as_read(self, poller: InboxPoller, inbox: InboxIO) -> None:
         """poll_once 后消息应被标记为已读。"""
         await inbox.write(_make_msg(text="msg"))
         await poller.poll_once()
@@ -97,9 +95,7 @@ class TestPollOnce:
         assert messages == []
 
     @pytest.mark.asyncio
-    async def test_poll_once_multiple_messages(
-        self, poller: InboxPoller, inbox: InboxIO
-    ) -> None:
+    async def test_poll_once_multiple_messages(self, poller: InboxPoller, inbox: InboxIO) -> None:
         """poll_once 一次返回多条消息。"""
         await inbox.write(_make_msg(text="a"))
         await inbox.write(_make_msg(text="b"))
@@ -126,9 +122,7 @@ class TestMtimeOptimization:
     """mtime 跳过逻辑测试。"""
 
     @pytest.mark.asyncio
-    async def test_skips_when_mtime_unchanged(
-        self, poller: InboxPoller, inbox: InboxIO
-    ) -> None:
+    async def test_skips_when_mtime_unchanged(self, poller: InboxPoller, inbox: InboxIO) -> None:
         """mtime 未变化时跳过读取。"""
         await inbox.write(_make_msg(text="initial"))
         await poller.poll_once()  # 消耗初始消息
@@ -140,9 +134,7 @@ class TestMtimeOptimization:
         assert messages == []
 
     @pytest.mark.asyncio
-    async def test_force_ignores_mtime(
-        self, poller: InboxPoller, inbox: InboxIO
-    ) -> None:
+    async def test_force_ignores_mtime(self, poller: InboxPoller, inbox: InboxIO) -> None:
         """force=True 忽略 mtime 检查。"""
         await inbox.write(_make_msg(text="msg"))
         await poller.poll_once()  # 消耗并更新 mtime
@@ -161,15 +153,11 @@ class TestHandlerDispatch:
     """消息分发到 handler 测试。"""
 
     @pytest.mark.asyncio
-    async def test_handler_called_with_message(
-        self, poller: InboxPoller, inbox: InboxIO
-    ) -> None:
+    async def test_handler_called_with_message(self, poller: InboxPoller, inbox: InboxIO) -> None:
         """handler 收到正确的 InboxMessage。"""
         received: list[InboxMessage] = []
 
-        async def handler(
-            msg: InboxMessage, msg_type: str | None, parsed: object
-        ) -> None:
+        async def handler(msg: InboxMessage, msg_type: str | None, parsed: object) -> None:
             received.append(msg)
 
         poller.on_message(handler)
@@ -180,15 +168,11 @@ class TestHandlerDispatch:
         assert received[0].text == "hello world"
 
     @pytest.mark.asyncio
-    async def test_plain_text_handler_args(
-        self, poller: InboxPoller, inbox: InboxIO
-    ) -> None:
+    async def test_plain_text_handler_args(self, poller: InboxPoller, inbox: InboxIO) -> None:
         """纯文本消息: msg_type=None, parsed=None。"""
         captured: list[tuple] = []
 
-        async def handler(
-            msg: InboxMessage, msg_type: str | None, parsed: object
-        ) -> None:
+        async def handler(msg: InboxMessage, msg_type: str | None, parsed: object) -> None:
             captured.append((msg_type, parsed))
 
         poller.on_message(handler)
@@ -198,27 +182,25 @@ class TestHandlerDispatch:
         assert captured[0] == (None, None)
 
     @pytest.mark.asyncio
-    async def test_structured_message_parsed(
-        self, poller: InboxPoller, inbox: InboxIO
-    ) -> None:
+    async def test_structured_message_parsed(self, poller: InboxPoller, inbox: InboxIO) -> None:
         """结构化消息应被解析。"""
         captured: list[tuple] = []
 
-        async def handler(
-            msg: InboxMessage, msg_type: str | None, parsed: object
-        ) -> None:
+        async def handler(msg: InboxMessage, msg_type: str | None, parsed: object) -> None:
             captured.append((msg_type, parsed))
 
         poller.on_message(handler)
 
         # 写入结构化消息
-        shutdown_json = json.dumps({
-            "type": "shutdown_request",
-            "requestId": "req-1",
-            "from": "leader",
-            "reason": "done",
-            "timestamp": FIXED_ISO,
-        })
+        shutdown_json = json.dumps(
+            {
+                "type": "shutdown_request",
+                "requestId": "req-1",
+                "from": "leader",
+                "reason": "done",
+                "timestamp": FIXED_ISO,
+            }
+        )
         await inbox.write(_make_msg(text=shutdown_json))
         await poller.poll_once()
 
@@ -227,9 +209,7 @@ class TestHandlerDispatch:
         assert captured[0][1].request_id == "req-1"
 
     @pytest.mark.asyncio
-    async def test_multiple_handlers(
-        self, poller: InboxPoller, inbox: InboxIO
-    ) -> None:
+    async def test_multiple_handlers(self, poller: InboxPoller, inbox: InboxIO) -> None:
         """多个 handler 均被调用。"""
         count_a = 0
         count_b = 0
@@ -252,9 +232,7 @@ class TestHandlerDispatch:
         assert count_b == 1
 
     @pytest.mark.asyncio
-    async def test_handler_exception_isolated(
-        self, poller: InboxPoller, inbox: InboxIO
-    ) -> None:
+    async def test_handler_exception_isolated(self, poller: InboxPoller, inbox: InboxIO) -> None:
         """handler 异常不影响其他 handler。"""
         results: list[str] = []
 
@@ -316,9 +294,7 @@ class TestLifecycle:
         await poller.stop()  # 不应抛出
 
     @pytest.mark.asyncio
-    async def test_poll_loop_processes_messages(
-        self, poller: InboxPoller, inbox: InboxIO
-    ) -> None:
+    async def test_poll_loop_processes_messages(self, poller: InboxPoller, inbox: InboxIO) -> None:
         """启动轮询后应自动处理新消息。"""
         received: list[str] = []
 
@@ -362,9 +338,7 @@ class TestMtimeTimingBehavior:
         """dispatch 异常时 _last_mtime 保留旧值，下次 poll 可重试。"""
         error_count = 0
 
-        async def failing_handler(
-            msg: InboxMessage, mt: str | None, p: object
-        ) -> None:
+        async def failing_handler(msg: InboxMessage, mt: str | None, p: object) -> None:
             nonlocal error_count
             error_count += 1
             raise RuntimeError("handler crash")
@@ -389,9 +363,7 @@ class TestMtimeTimingBehavior:
         # poll_once (force=True) 总是执行，我们验证 _do_poll(force=False) 行为。
 
     @pytest.mark.asyncio
-    async def test_no_new_messages_updates_mtime(
-        self, poller: InboxPoller, inbox: InboxIO
-    ) -> None:
+    async def test_no_new_messages_updates_mtime(self, poller: InboxPoller, inbox: InboxIO) -> None:
         """文件变更但无新消息时，mtime 仍应更新防止无效重读。"""
         # 写入消息并消耗
         await inbox.write(_make_msg(text="consumed"))
@@ -423,9 +395,7 @@ class TestErrorHandlerBehavior:
         async def error_handler(exc: Exception, context: str) -> None:
             captured.append((exc, context))
 
-        async def bad_handler(
-            msg: InboxMessage, mt: str | None, p: object
-        ) -> None:
+        async def bad_handler(msg: InboxMessage, mt: str | None, p: object) -> None:
             raise ValueError("bad")
 
         poller.on_message(bad_handler)
@@ -443,12 +413,11 @@ class TestErrorHandlerBehavior:
         self, poller: InboxPoller, inbox: InboxIO
     ) -> None:
         """error handler 自身抛异常时被静默忽略（不崩溃）。"""
+
         async def bad_error_handler(exc: Exception, context: str) -> None:
             raise RuntimeError("error handler also broken")
 
-        async def bad_handler(
-            msg: InboxMessage, mt: str | None, p: object
-        ) -> None:
+        async def bad_handler(msg: InboxMessage, mt: str | None, p: object) -> None:
             raise ValueError("trigger")
 
         poller.on_message(bad_handler)

@@ -158,9 +158,7 @@ class MessageBuilder:
             summary=f"Session relayed → {new_session_id[:8]}...",
         )
         # Each inbox is an independent file with its own lock; write in parallel
-        await asyncio.gather(*[
-            InboxIO(self._team_name, r).write(msg) for r in recipients
-        ])
+        await asyncio.gather(*[InboxIO(self._team_name, r).write(msg) for r in recipients])
 
     async def broadcast(
         self,
@@ -173,6 +171,8 @@ class MessageBuilder:
         """广播消息到多个 Agent。"""
         for recipient in recipients:
             await self.send_plain(
-                recipient, content,
-                summary=summary, from_name=from_name,
+                recipient,
+                content,
+                summary=summary,
+                from_name=from_name,
             )

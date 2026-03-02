@@ -117,7 +117,9 @@ class TestBufferCleanup:
 
         with pytest.raises(TmuxError, match="paste failed"):
             await tmux.send_command(
-                "%1", "x" * SEND_KEYS_THRESHOLD, press_enter=False,
+                "%1",
+                "x" * SEND_KEYS_THRESHOLD,
+                press_enter=False,
             )
 
         all_calls = [call[0] for call in runner.call_args_list]
@@ -181,9 +183,7 @@ class TestSplitWindow:
     @pytest.mark.asyncio
     async def test_tmux_failure_raises(self) -> None:
         """tmux 命令失败时抛出 TmuxError。"""
-        runner = _make_runner(
-            _make_proc(stderr=b"no tmux server", returncode=1)
-        )
+        runner = _make_runner(_make_proc(stderr=b"no tmux server", returncode=1))
         tmux = TmuxManager(runner=runner)
         with pytest.raises(TmuxError, match="tmux command failed"):
             await tmux.split_window()
@@ -223,9 +223,7 @@ class TestIsPaneAlive:
     @pytest.mark.asyncio
     async def test_dead_returns_false(self) -> None:
         """Returns False when display-message fails."""
-        runner = _make_runner(
-            _make_proc(stderr=b"can't find pane", returncode=1)
-        )
+        runner = _make_runner(_make_proc(stderr=b"can't find pane", returncode=1))
         tmux = TmuxManager(runner=runner)
         assert await tmux.is_pane_alive("%99") is False
 
@@ -322,7 +320,9 @@ class TestSendCommand:
         tmux = TmuxManager(runner=runner)
 
         await tmux.send_command(
-            "%1", "x" * SEND_KEYS_THRESHOLD, clear_mode=ClearMode.SHELL,
+            "%1",
+            "x" * SEND_KEYS_THRESHOLD,
+            clear_mode=ClearMode.SHELL,
         )
 
         all_calls = [call[0] for call in runner.call_args_list]
@@ -338,7 +338,9 @@ class TestSendCommand:
         tmux = TmuxManager(runner=runner)
 
         await tmux.send_command(
-            "%1", "x" * SEND_KEYS_THRESHOLD, clear_mode=ClearMode.ESCAPE,
+            "%1",
+            "x" * SEND_KEYS_THRESHOLD,
+            clear_mode=ClearMode.ESCAPE,
         )
 
         all_calls = [call[0] for call in runner.call_args_list]
@@ -356,7 +358,9 @@ class TestSendCommand:
         tmux = TmuxManager(runner=runner)
 
         await tmux.send_command(
-            "%1", "echo hi", clear_mode=ClearMode.SHELL,
+            "%1",
+            "echo hi",
+            clear_mode=ClearMode.SHELL,
         )
 
         all_calls = [call[0] for call in runner.call_args_list]
@@ -452,9 +456,7 @@ class TestDetectState:
     @pytest.mark.asyncio
     async def test_waiting_input(self) -> None:
         """Detect WAITING_INPUT for queued message prompt."""
-        runner = _make_runner(
-            _make_proc(stdout=b"Press up to edit queued messages\n")
-        )
+        runner = _make_runner(_make_proc(stdout=b"Press up to edit queued messages\n"))
         tmux = TmuxManager(runner=runner)
         assert await tmux.detect_state("%1") == PaneState.WAITING_INPUT
 
@@ -490,9 +492,7 @@ class TestDetectState:
     @pytest.mark.asyncio
     async def test_unknown_on_capture_failure(self) -> None:
         """Return UNKNOWN when capture raises TmuxError."""
-        runner = _make_runner(
-            _make_proc(stderr=b"can't find pane", returncode=1)
-        )
+        runner = _make_runner(_make_proc(stderr=b"can't find pane", returncode=1))
         tmux = TmuxManager(runner=runner)
         assert await tmux.detect_state("%99") == PaneState.UNKNOWN
 
@@ -551,9 +551,7 @@ class TestDisplayMessage:
     @pytest.mark.asyncio
     async def test_returns_none_on_failure(self) -> None:
         """Returns None when tmux command fails."""
-        runner = _make_runner(
-            _make_proc(stderr=b"no pane", returncode=1)
-        )
+        runner = _make_runner(_make_proc(stderr=b"no pane", returncode=1))
         tmux = TmuxManager(runner=runner)
         assert await tmux.display_message("%99", "#{pane_id}") is None
 
@@ -588,9 +586,7 @@ class TestVerifyPane:
     @pytest.mark.asyncio
     async def test_dead_pane(self) -> None:
         """Returns False when display-message fails."""
-        runner = _make_runner(
-            _make_proc(stderr=b"no pane", returncode=1)
-        )
+        runner = _make_runner(_make_proc(stderr=b"no pane", returncode=1))
         tmux = TmuxManager(runner=runner)
         assert await tmux.verify_pane("%99") is False
 
@@ -611,9 +607,7 @@ class TestGetPaneTitle:
     @pytest.mark.asyncio
     async def test_returns_none_on_failure(self) -> None:
         """Returns None when pane does not exist."""
-        runner = _make_runner(
-            _make_proc(stderr=b"no pane", returncode=1)
-        )
+        runner = _make_runner(_make_proc(stderr=b"no pane", returncode=1))
         tmux = TmuxManager(runner=runner)
         assert await tmux.get_pane_title("%99") is None
 
@@ -640,9 +634,7 @@ class TestNotify:
     @pytest.mark.asyncio
     async def test_failure_is_suppressed(self) -> None:
         """Failure in display-message does not raise."""
-        runner = _make_runner(
-            _make_proc(stderr=b"no server", returncode=1)
-        )
+        runner = _make_runner(_make_proc(stderr=b"no server", returncode=1))
         tmux = TmuxManager(runner=runner)
         # Should not raise
         await tmux.notify("test")
@@ -664,7 +656,9 @@ class TestSendEnterWithRetry:
         )
         tmux = TmuxManager(runner=runner)
         result = await tmux.send_enter_with_retry(
-            "%1", "old output", retry_delay=0,
+            "%1",
+            "old output",
+            retry_delay=0,
         )
         assert result is True
 
@@ -679,7 +673,9 @@ class TestSendEnterWithRetry:
         tmux = TmuxManager(runner=runner)
         # Pass the same content as before — should still succeed via regex
         result = await tmux.send_enter_with_retry(
-            "%1", content, retry_delay=0,
+            "%1",
+            content,
+            retry_delay=0,
         )
         assert result is True
 
@@ -695,7 +691,10 @@ class TestSendEnterWithRetry:
         runner = _make_runner(*procs)
         tmux = TmuxManager(runner=runner)
         result = await tmux.send_enter_with_retry(
-            "%1", "unchanged content\n", max_retries=3, retry_delay=0,
+            "%1",
+            "unchanged content\n",
+            max_retries=3,
+            retry_delay=0,
         )
         assert result is False
         # Verify all retries were attempted
@@ -714,7 +713,9 @@ class TestSendEnterWithRetry:
         runner = _make_runner(*procs)
         tmux = TmuxManager(runner=runner)
         result = await tmux.send_enter_with_retry(
-            "%1", "old output", retry_delay=0,
+            "%1",
+            "old output",
+            retry_delay=0,
         )
         assert result is True
 
@@ -728,9 +729,7 @@ class TestExecError:
     @pytest.mark.asyncio
     async def test_nonzero_exit_includes_stderr(self) -> None:
         """非零退出码时 TmuxError 包含 stderr 内容。"""
-        runner = _make_runner(
-            _make_proc(stderr=b"session not found", returncode=1)
-        )
+        runner = _make_runner(_make_proc(stderr=b"session not found", returncode=1))
         tmux = TmuxManager(runner=runner)
         with pytest.raises(TmuxError, match="session not found"):
             await tmux._exec(["tmux", "list-sessions"])

@@ -95,23 +95,37 @@ class TestAgentSpawn:
     async def test_spawn_team_not_found_exits(self, isolated_home: Path) -> None:
         """团队不存在时 exit(1)。"""
         parser = _build_parser()
-        args = parser.parse_args([
-            "--team-name", "ghost-team",
-            "agent", "spawn", "--name", "a", "--prompt", "hi",
-        ])
+        args = parser.parse_args(
+            [
+                "--team-name",
+                "ghost-team",
+                "agent",
+                "spawn",
+                "--name",
+                "a",
+                "--prompt",
+                "hi",
+            ]
+        )
         with pytest.raises(SystemExit):
             await args.func(args)
 
     @pytest.mark.asyncio
-    async def test_spawn_normal_flow(
-        self, team: TeamManager, isolated_home: Path
-    ) -> None:
+    async def test_spawn_normal_flow(self, team: TeamManager, isolated_home: Path) -> None:
         """Normal spawn flow: register member + write inbox + update backend_id."""
         parser = _build_parser()
-        args = parser.parse_args([
-            "--team-name", "test-team",
-            "agent", "spawn", "--name", "dev", "--prompt", "Do work",
-        ])
+        args = parser.parse_args(
+            [
+                "--team-name",
+                "test-team",
+                "agent",
+                "spawn",
+                "--name",
+                "dev",
+                "--prompt",
+                "Do work",
+            ]
+        )
 
         # Mock ProcessManager（惰性导入在函数内部，需 patch 源模块）
         with patch("cc_team.process_manager.ProcessManager") as MockPM:
@@ -132,15 +146,21 @@ class TestAgentSpawn:
         assert msgs[0]["text"] == "Do work"
 
     @pytest.mark.asyncio
-    async def test_spawn_failure_rollback(
-        self, team: TeamManager, isolated_home: Path
-    ) -> None:
+    async def test_spawn_failure_rollback(self, team: TeamManager, isolated_home: Path) -> None:
         """进程启动失败时，成员应被回滚。"""
         parser = _build_parser()
-        args = parser.parse_args([
-            "--team-name", "test-team",
-            "agent", "spawn", "--name", "doomed", "--prompt", "hi",
-        ])
+        args = parser.parse_args(
+            [
+                "--team-name",
+                "test-team",
+                "agent",
+                "spawn",
+                "--name",
+                "doomed",
+                "--prompt",
+                "hi",
+            ]
+        )
 
         with patch("cc_team.process_manager.ProcessManager") as MockPM:
             mock_pm = MockPM.return_value
@@ -163,23 +183,37 @@ class TestAgentRegister:
     async def test_register_team_not_found_exits(self, isolated_home: Path) -> None:
         """团队不存在时 exit(1)。"""
         parser = _build_parser()
-        args = parser.parse_args([
-            "--team-name", "ghost-team",
-            "agent", "register", "--name", "bot1",
-        ])
+        args = parser.parse_args(
+            [
+                "--team-name",
+                "ghost-team",
+                "agent",
+                "register",
+                "--name",
+                "bot1",
+            ]
+        )
         with pytest.raises(SystemExit):
             await args.func(args)
 
     @pytest.mark.asyncio
     async def test_register_normal_flow(
-        self, team: TeamManager, isolated_home: Path,
+        self,
+        team: TeamManager,
+        isolated_home: Path,
     ) -> None:
         """正常 register：config 写入 + inbox 创建 + 无 pane。"""
         parser = _build_parser()
-        args = parser.parse_args([
-            "--team-name", "test-team",
-            "agent", "register", "--name", "bot1",
-        ])
+        args = parser.parse_args(
+            [
+                "--team-name",
+                "test-team",
+                "agent",
+                "register",
+                "--name",
+                "bot1",
+            ]
+        )
         await args.func(args)
 
         # 成员应已注册
@@ -191,6 +225,7 @@ class TestAgentRegister:
 
         # inbox 应存在且为空数组
         import cc_team.paths as paths_mod
+
         inbox_path = paths_mod.inbox_path("test-team", "bot1")
         assert inbox_path.exists()
         msgs = json.loads(inbox_path.read_text())
@@ -198,15 +233,24 @@ class TestAgentRegister:
 
     @pytest.mark.asyncio
     async def test_register_json_output(
-        self, team: TeamManager, isolated_home: Path,
+        self,
+        team: TeamManager,
+        isolated_home: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """--json 输出 JSON 格式。"""
         parser = _build_parser()
-        args = parser.parse_args([
-            "--team-name", "test-team", "--json",
-            "agent", "register", "--name", "bot2",
-        ])
+        args = parser.parse_args(
+            [
+                "--team-name",
+                "test-team",
+                "--json",
+                "agent",
+                "register",
+                "--name",
+                "bot2",
+            ]
+        )
         await args.func(args)
 
         captured = capsys.readouterr()
@@ -217,17 +261,25 @@ class TestAgentRegister:
 
     @pytest.mark.asyncio
     async def test_register_then_message_send(
-        self, team: TeamManager, isolated_home: Path,
+        self,
+        team: TeamManager,
+        isolated_home: Path,
     ) -> None:
         """register 后可通过 message send 发送消息。"""
         from cc_team.message_builder import MessageBuilder
 
         # 先 register
         parser = _build_parser()
-        args = parser.parse_args([
-            "--team-name", "test-team",
-            "agent", "register", "--name", "bot3",
-        ])
+        args = parser.parse_args(
+            [
+                "--team-name",
+                "test-team",
+                "agent",
+                "register",
+                "--name",
+                "bot3",
+            ]
+        )
         await args.func(args)
 
         # 然后发送消息
@@ -236,6 +288,7 @@ class TestAgentRegister:
 
         # 验证消息写入
         import cc_team.paths as paths_mod
+
         inbox_path = paths_mod.inbox_path("test-team", "bot3")
         msgs = json.loads(inbox_path.read_text())
         texts = [m["text"] for m in msgs]
@@ -243,15 +296,26 @@ class TestAgentRegister:
 
     @pytest.mark.asyncio
     async def test_register_custom_type_and_model(
-        self, team: TeamManager, isolated_home: Path,
+        self,
+        team: TeamManager,
+        isolated_home: Path,
     ) -> None:
         """支持 --type 和 --model 自定义参数。"""
         parser = _build_parser()
-        args = parser.parse_args([
-            "--team-name", "test-team",
-            "agent", "register", "--name", "explorer",
-            "--type", "Explore", "--model", "claude-haiku-4-5-20251001",
-        ])
+        args = parser.parse_args(
+            [
+                "--team-name",
+                "test-team",
+                "agent",
+                "register",
+                "--name",
+                "explorer",
+                "--type",
+                "Explore",
+                "--model",
+                "claude-haiku-4-5-20251001",
+            ]
+        )
         await args.func(args)
 
         member = team.get_member("explorer")
@@ -267,22 +331,24 @@ class TestAgentKill:
     """agent kill CLI 测试。"""
 
     @pytest.mark.asyncio
-    async def test_kill_not_found_exits(
-        self, team: TeamManager, isolated_home: Path
-    ) -> None:
+    async def test_kill_not_found_exits(self, team: TeamManager, isolated_home: Path) -> None:
         """kill 不存在的 agent 应 exit(1)。"""
         parser = _build_parser()
-        args = parser.parse_args([
-            "--team-name", "test-team",
-            "agent", "kill", "--name", "ghost",
-        ])
+        args = parser.parse_args(
+            [
+                "--team-name",
+                "test-team",
+                "agent",
+                "kill",
+                "--name",
+                "ghost",
+            ]
+        )
         with pytest.raises(SystemExit):
             await args.func(args)
 
     @pytest.mark.asyncio
-    async def test_kill_normal_flow(
-        self, team: TeamManager, isolated_home: Path
-    ) -> None:
+    async def test_kill_normal_flow(self, team: TeamManager, isolated_home: Path) -> None:
         """正常 kill 流程：kill_pane + remove_member。"""
         # 先添加一个成员
         member = TeamMember(
@@ -299,10 +365,17 @@ class TestAgentKill:
         await team.add_member(member)
 
         parser = _build_parser()
-        args = parser.parse_args([
-            "--team-name", "test-team", "--quiet",
-            "agent", "kill", "--name", "victim",
-        ])
+        args = parser.parse_args(
+            [
+                "--team-name",
+                "test-team",
+                "--quiet",
+                "agent",
+                "kill",
+                "--name",
+                "victim",
+            ]
+        )
 
         with patch("cc_team.tmux.TmuxManager") as MockTmux:
             mock_tmux = MockTmux.return_value
@@ -332,10 +405,17 @@ class TestAgentKill:
         await team.add_member(member)
 
         parser = _build_parser()
-        args = parser.parse_args([
-            "--team-name", "test-team", "--quiet",
-            "agent", "kill", "--name", "dead-agent",
-        ])
+        args = parser.parse_args(
+            [
+                "--team-name",
+                "test-team",
+                "--quiet",
+                "agent",
+                "kill",
+                "--name",
+                "dead-agent",
+            ]
+        )
 
         with patch("cc_team.tmux.TmuxManager") as MockTmux:
             mock_tmux = MockTmux.return_value
@@ -356,10 +436,16 @@ class TestTaskUpdate:
     def test_no_update_fields_exits(self, isolated_home: Path) -> None:
         """无更新字段时 exit(1)。"""
         with pytest.raises(SystemExit) as exc_info:
-            main([
-                "--team-name", "test-team",
-                "task", "update", "--id", "1",
-            ])
+            main(
+                [
+                    "--team-name",
+                    "test-team",
+                    "task",
+                    "update",
+                    "--id",
+                    "1",
+                ]
+            )
         assert exc_info.value.code == 1
 
 
@@ -371,14 +457,25 @@ class TestJsonOutput:
 
     @pytest.mark.asyncio
     async def test_team_create_json(
-        self, isolated_home: Path, capsys: pytest.CaptureFixture[str],
+        self,
+        isolated_home: Path,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         """team create --json 输出 JSON。"""
         parser = _build_parser()
-        args = parser.parse_args([
-            "--team-name", "json-team", "--json",
-            "team", "create", "--name", "json-team", "--description", "test",
-        ])
+        args = parser.parse_args(
+            [
+                "--team-name",
+                "json-team",
+                "--json",
+                "team",
+                "create",
+                "--name",
+                "json-team",
+                "--description",
+                "test",
+            ]
+        )
         await args.func(args)
         captured = capsys.readouterr()
         data = json.loads(captured.out)
@@ -390,10 +487,15 @@ class TestJsonOutput:
     ) -> None:
         """agent list --json 空列表输出 JSON 数组。"""
         parser = _build_parser()
-        args = parser.parse_args([
-            "--team-name", "test-team", "--json",
-            "agent", "list",
-        ])
+        args = parser.parse_args(
+            [
+                "--team-name",
+                "test-team",
+                "--json",
+                "agent",
+                "list",
+            ]
+        )
         await args.func(args)
         captured = capsys.readouterr()
         data = json.loads(captured.out)
@@ -408,7 +510,8 @@ class TestSkillCommand:
 
     @pytest.mark.asyncio
     async def test_skill_markdown_output(
-        self, capsys: pytest.CaptureFixture[str],
+        self,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         """skill outputs Markdown reference document."""
         parser = _build_parser()
@@ -420,7 +523,8 @@ class TestSkillCommand:
 
     @pytest.mark.asyncio
     async def test_skill_json_output(
-        self, capsys: pytest.CaptureFixture[str],
+        self,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         """--json skill outputs structured JSON with version and sections."""
         parser = _build_parser()
@@ -457,23 +561,34 @@ class TestTeamTakeover:
     async def test_takeover_team_not_found_exits(self, isolated_home: Path) -> None:
         """团队不存在时 exit(1)。"""
         parser = _build_parser()
-        args = parser.parse_args([
-            "--team-name", "ghost", "team", "takeover",
-        ])
+        args = parser.parse_args(
+            [
+                "--team-name",
+                "ghost",
+                "team",
+                "takeover",
+            ]
+        )
         with pytest.raises(SystemExit):
             await args.func(args)
 
     @pytest.mark.asyncio
     async def test_takeover_normal_flow(
-        self, team: TeamManager, isolated_home: Path,
+        self,
+        team: TeamManager,
+        isolated_home: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """正常 takeover：轮转 session + spawn TL + 更新 pane。"""
         parser = _build_parser()
-        args = parser.parse_args([
-            "--team-name", "test-team",
-            "team", "takeover",
-        ])
+        args = parser.parse_args(
+            [
+                "--team-name",
+                "test-team",
+                "team",
+                "takeover",
+            ]
+        )
 
         with patch("cc_team.process_manager.ProcessManager") as MockPM:
             mock_pm = MockPM.return_value
@@ -496,17 +611,23 @@ class TestTeamTakeover:
 
     @pytest.mark.asyncio
     async def test_takeover_tl_running_no_force_exits(
-        self, team: TeamManager, isolated_home: Path,
+        self,
+        team: TeamManager,
+        isolated_home: Path,
     ) -> None:
         """TL 已运行且无 --force 时 exit(1)。"""
         # Update TL's backend_id first
         await team.update_member("team-lead", tmux_pane_id="%42")
 
         parser = _build_parser()
-        args = parser.parse_args([
-            "--team-name", "test-team",
-            "team", "takeover",
-        ])
+        args = parser.parse_args(
+            [
+                "--team-name",
+                "test-team",
+                "team",
+                "takeover",
+            ]
+        )
 
         with patch("cc_team.tmux.TmuxManager") as MockTmux:
             mock_tmux = MockTmux.return_value
@@ -517,19 +638,28 @@ class TestTeamTakeover:
 
     @pytest.mark.asyncio
     async def test_takeover_force_overrides_running_tl(
-        self, team: TeamManager, isolated_home: Path,
+        self,
+        team: TeamManager,
+        isolated_home: Path,
     ) -> None:
         """--force 强制接管已运行的 TL。"""
         await team.update_member("team-lead", tmux_pane_id="%42")
 
         parser = _build_parser()
-        args = parser.parse_args([
-            "--team-name", "test-team",
-            "team", "takeover", "--force",
-        ])
+        args = parser.parse_args(
+            [
+                "--team-name",
+                "test-team",
+                "team",
+                "takeover",
+                "--force",
+            ]
+        )
 
-        with patch("cc_team.tmux.TmuxManager") as MockTmux, \
-             patch("cc_team.process_manager.ProcessManager") as MockPM:
+        with (
+            patch("cc_team.tmux.TmuxManager") as MockTmux,
+            patch("cc_team.process_manager.ProcessManager") as MockPM,
+        ):
             mock_tmux = MockTmux.return_value
             mock_tmux.is_pane_alive = AsyncMock(return_value=True)
             mock_pm = MockPM.return_value
@@ -552,15 +682,22 @@ class TestTeamRelay:
     async def test_relay_team_not_found_exits(self, isolated_home: Path) -> None:
         """团队不存在时 exit(1)。"""
         parser = _build_parser()
-        args = parser.parse_args([
-            "--team-name", "ghost", "team", "relay",
-        ])
+        args = parser.parse_args(
+            [
+                "--team-name",
+                "ghost",
+                "team",
+                "relay",
+            ]
+        )
         with pytest.raises(SystemExit):
             await args.func(args)
 
     @pytest.mark.asyncio
     async def test_relay_normal_flow(
-        self, team: TeamManager, isolated_home: Path,
+        self,
+        team: TeamManager,
+        isolated_home: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """正常 relay：退出旧 TL + 轮转 session + spawn 新 TL。"""
@@ -569,10 +706,14 @@ class TestTeamRelay:
         old_sid = old_config.lead_session_id
 
         parser = _build_parser()
-        args = parser.parse_args([
-            "--team-name", "test-team",
-            "team", "relay",
-        ])
+        args = parser.parse_args(
+            [
+                "--team-name",
+                "test-team",
+                "team",
+                "relay",
+            ]
+        )
 
         with patch("cc_team.process_manager.ProcessManager") as MockPM:
             mock_pm = MockPM.return_value
@@ -602,15 +743,21 @@ class TestTeamSession:
 
     @pytest.mark.asyncio
     async def test_session_query(
-        self, team: TeamManager, isolated_home: Path,
+        self,
+        team: TeamManager,
+        isolated_home: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """无参数查询当前 session ID。"""
         parser = _build_parser()
-        args = parser.parse_args([
-            "--team-name", "test-team",
-            "team", "session",
-        ])
+        args = parser.parse_args(
+            [
+                "--team-name",
+                "test-team",
+                "team",
+                "session",
+            ]
+        )
         await args.func(args)
         captured = capsys.readouterr()
         config = team.read()
@@ -619,7 +766,9 @@ class TestTeamSession:
 
     @pytest.mark.asyncio
     async def test_session_rotate(
-        self, team: TeamManager, isolated_home: Path,
+        self,
+        team: TeamManager,
+        isolated_home: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """--rotate 生成新 UUID。"""
@@ -628,10 +777,15 @@ class TestTeamSession:
         old_sid = old_config.lead_session_id
 
         parser = _build_parser()
-        args = parser.parse_args([
-            "--team-name", "test-team",
-            "team", "session", "--rotate",
-        ])
+        args = parser.parse_args(
+            [
+                "--team-name",
+                "test-team",
+                "team",
+                "session",
+                "--rotate",
+            ]
+        )
         await args.func(args)
 
         config = team.read()
@@ -642,15 +796,23 @@ class TestTeamSession:
 
     @pytest.mark.asyncio
     async def test_session_set(
-        self, team: TeamManager, isolated_home: Path,
+        self,
+        team: TeamManager,
+        isolated_home: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """--set 指定值。"""
         parser = _build_parser()
-        args = parser.parse_args([
-            "--team-name", "test-team",
-            "team", "session", "--set", "my-custom-id",
-        ])
+        args = parser.parse_args(
+            [
+                "--team-name",
+                "test-team",
+                "team",
+                "session",
+                "--set",
+                "my-custom-id",
+            ]
+        )
         await args.func(args)
 
         config = team.read()
@@ -663,10 +825,14 @@ class TestTeamSession:
     async def test_session_not_found_exits(self, isolated_home: Path) -> None:
         """团队不存在时 exit(1)。"""
         parser = _build_parser()
-        args = parser.parse_args([
-            "--team-name", "ghost",
-            "team", "session",
-        ])
+        args = parser.parse_args(
+            [
+                "--team-name",
+                "ghost",
+                "team",
+                "session",
+            ]
+        )
         with pytest.raises(SystemExit):
             await args.func(args)
 
@@ -681,41 +847,63 @@ class TestAgentSync:
     async def test_sync_team_not_found_exits(self, isolated_home: Path) -> None:
         """团队不存在时 exit(1)。"""
         parser = _build_parser()
-        args = parser.parse_args([
-            "--team-name", "ghost",
-            "agent", "sync",
-        ])
+        args = parser.parse_args(
+            [
+                "--team-name",
+                "ghost",
+                "agent",
+                "sync",
+            ]
+        )
         with pytest.raises(SystemExit):
             await args.func(args)
 
     @pytest.mark.asyncio
     async def test_sync_normal_flow(
-        self, team: TeamManager, isolated_home: Path,
+        self,
+        team: TeamManager,
+        isolated_home: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """正常 sync：存活 → synced，死亡 → inactive。"""
         # 添加一个 active agent
         member = TeamMember(
-            agent_id="w@test-team", name="worker-1",
-            agent_type="general-purpose", model="claude-sonnet-4-6",
-            joined_at=FIXED_MS, tmux_pane_id="%68", cwd="/tmp",
-            color="blue", is_active=True, backend_type="tmux",
+            agent_id="w@test-team",
+            name="worker-1",
+            agent_type="general-purpose",
+            model="claude-sonnet-4-6",
+            joined_at=FIXED_MS,
+            tmux_pane_id="%68",
+            cwd="/tmp",
+            color="blue",
+            is_active=True,
+            backend_type="tmux",
         )
         await team.add_member(member)
         # 添加一个 dead agent
         dead_member = TeamMember(
-            agent_id="d@test-team", name="dead-agent",
-            agent_type="general-purpose", model="claude-sonnet-4-6",
-            joined_at=FIXED_MS, tmux_pane_id="%55", cwd="/tmp",
-            color="green", is_active=True, backend_type="tmux",
+            agent_id="d@test-team",
+            name="dead-agent",
+            agent_type="general-purpose",
+            model="claude-sonnet-4-6",
+            joined_at=FIXED_MS,
+            tmux_pane_id="%55",
+            cwd="/tmp",
+            color="green",
+            is_active=True,
+            backend_type="tmux",
         )
         await team.add_member(dead_member)
 
         parser = _build_parser()
-        args = parser.parse_args([
-            "--team-name", "test-team",
-            "agent", "sync",
-        ])
+        args = parser.parse_args(
+            [
+                "--team-name",
+                "test-team",
+                "agent",
+                "sync",
+            ]
+        )
 
         with patch("cc_team.tmux.TmuxManager") as MockTmux:
             mock_tmux = MockTmux.return_value
@@ -740,23 +928,36 @@ class TestAgentSync:
 
     @pytest.mark.asyncio
     async def test_sync_json_output(
-        self, team: TeamManager, isolated_home: Path,
+        self,
+        team: TeamManager,
+        isolated_home: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """--json 输出 JSON 格式。"""
         member = TeamMember(
-            agent_id="w@test-team", name="worker-1",
-            agent_type="general-purpose", model="claude-sonnet-4-6",
-            joined_at=FIXED_MS, tmux_pane_id="%68", cwd="/tmp",
-            color="blue", is_active=True, backend_type="tmux",
+            agent_id="w@test-team",
+            name="worker-1",
+            agent_type="general-purpose",
+            model="claude-sonnet-4-6",
+            joined_at=FIXED_MS,
+            tmux_pane_id="%68",
+            cwd="/tmp",
+            color="blue",
+            is_active=True,
+            backend_type="tmux",
         )
         await team.add_member(member)
 
         parser = _build_parser()
-        args = parser.parse_args([
-            "--team-name", "test-team", "--json",
-            "agent", "sync",
-        ])
+        args = parser.parse_args(
+            [
+                "--team-name",
+                "test-team",
+                "--json",
+                "agent",
+                "sync",
+            ]
+        )
 
         with patch("cc_team.tmux.TmuxManager") as MockTmux:
             mock_tmux = MockTmux.return_value

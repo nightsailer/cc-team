@@ -167,13 +167,20 @@ class ProcessManager:
 
         args = [
             claude_path,
-            "--agent-id", f"{options.name}@{team_name}",
-            "--agent-name", options.name,
-            "--team-name", team_name,
-            "--agent-color", color,
-            "--parent-session-id", parent_session_id,
-            "--agent-type", options.agent_type,
-            "--model", options.model,
+            "--agent-id",
+            f"{options.name}@{team_name}",
+            "--agent-name",
+            options.name,
+            "--team-name",
+            team_name,
+            "--agent-color",
+            color,
+            "--parent-session-id",
+            parent_session_id,
+            "--agent-type",
+            options.agent_type,
+            "--model",
+            options.model,
         ]
 
         # 条件性参数
@@ -214,13 +221,20 @@ class ProcessManager:
         tl = TEAM_LEAD_AGENT_TYPE
         args = [
             claude_path,
-            "--agent-id", f"{tl}@{options.team_name}",
-            "--agent-name", tl,
-            "--team-name", options.team_name,
-            "--parent-session-id", parent_session_id,
-            "--agent-type", tl,
-            "--model", options.model,
-            "--session-id", options.session_id,
+            "--agent-id",
+            f"{tl}@{options.team_name}",
+            "--agent-name",
+            tl,
+            "--team-name",
+            options.team_name,
+            "--parent-session-id",
+            parent_session_id,
+            "--agent-type",
+            tl,
+            "--model",
+            options.model,
+            "--session-id",
+            options.session_id,
         ]
 
         if options.permission_mode is not None:
@@ -272,9 +286,7 @@ class ProcessManager:
         self._panes[TEAM_LEAD_AGENT_TYPE] = pane_id
         return pane_id
 
-    async def _send_to_pane(
-        self, pane_id: str, command: str, *, owned_pane: bool
-    ) -> None:
+    async def _send_to_pane(self, pane_id: str, command: str, *, owned_pane: bool) -> None:
         """发送命令到 pane，失败时按所有权清理。
 
         Args:

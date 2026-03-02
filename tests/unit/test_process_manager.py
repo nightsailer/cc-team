@@ -227,7 +227,9 @@ class TestKill:
         pm = ProcessManager(tmux=tmux)
         await pm.spawn(
             _make_options(name="dev"),
-            team_name="t", color="blue", parent_session_id="s",
+            team_name="t",
+            color="blue",
+            parent_session_id="s",
         )
 
         await pm.kill("dev")
@@ -249,7 +251,9 @@ class TestKill:
         pm = ProcessManager(tmux=tmux)
         await pm.spawn(
             _make_options(name="dev"),
-            team_name="t", color="blue", parent_session_id="s",
+            team_name="t",
+            color="blue",
+            parent_session_id="s",
         )
 
         await pm.kill("dev")  # 不应抛出
@@ -269,7 +273,9 @@ class TestUntrack:
         pm = ProcessManager(tmux=tmux)
         await pm.spawn(
             _make_options(name="dev"),
-            team_name="t", color="blue", parent_session_id="s",
+            team_name="t",
+            color="blue",
+            parent_session_id="s",
         )
 
         pm.untrack("dev")
@@ -294,7 +300,9 @@ class TestIsRunning:
         pm = ProcessManager(tmux=tmux)
         await pm.spawn(
             _make_options(name="dev"),
-            team_name="t", color="blue", parent_session_id="s",
+            team_name="t",
+            color="blue",
+            parent_session_id="s",
         )
 
         assert await pm.is_running("dev") is True
@@ -313,7 +321,9 @@ class TestIsRunning:
         pm = ProcessManager(tmux=tmux)
         await pm.spawn(
             _make_options(name="dev"),
-            team_name="t", color="blue", parent_session_id="s",
+            team_name="t",
+            color="blue",
+            parent_session_id="s",
         )
 
         assert await pm.is_running("dev") is False
@@ -372,7 +382,9 @@ class TestBuildCliArgs:
         """plan_mode_required=True 时添加 --plan-mode-required。"""
         args = ProcessManager.build_cli_args(
             _make_options(plan_mode_required=True),
-            team_name="t", color="blue", parent_session_id="s",
+            team_name="t",
+            color="blue",
+            parent_session_id="s",
         )
         assert "--plan-mode-required" in args
 
@@ -380,7 +392,9 @@ class TestBuildCliArgs:
         """plan_mode_required=False 时不添加。"""
         args = ProcessManager.build_cli_args(
             _make_options(plan_mode_required=False),
-            team_name="t", color="blue", parent_session_id="s",
+            team_name="t",
+            color="blue",
+            parent_session_id="s",
         )
         assert "--plan-mode-required" not in args
 
@@ -388,7 +402,9 @@ class TestBuildCliArgs:
         """permission_mode="default" 时使用 --permission-mode default。"""
         args = ProcessManager.build_cli_args(
             _make_options(permission_mode="default"),
-            team_name="t", color="blue", parent_session_id="s",
+            team_name="t",
+            color="blue",
+            parent_session_id="s",
         )
         idx = args.index("--permission-mode")
         assert args[idx + 1] == "default"
@@ -397,7 +413,9 @@ class TestBuildCliArgs:
         """bypassPermissions 映射为 --dangerously-skip-permissions。"""
         args = ProcessManager.build_cli_args(
             _make_options(permission_mode="bypassPermissions"),
-            team_name="t", color="blue", parent_session_id="s",
+            team_name="t",
+            color="blue",
+            parent_session_id="s",
         )
         assert "--dangerously-skip-permissions" in args
         assert "--permission-mode" not in args
@@ -406,7 +424,9 @@ class TestBuildCliArgs:
         """delegate 映射为 acceptEdits（兼容旧版本）。"""
         args = ProcessManager.build_cli_args(
             _make_options(permission_mode="delegate"),
-            team_name="t", color="blue", parent_session_id="s",
+            team_name="t",
+            color="blue",
+            parent_session_id="s",
         )
         idx = args.index("--permission-mode")
         assert args[idx + 1] == "acceptEdits"
@@ -415,7 +435,9 @@ class TestBuildCliArgs:
         """allowed_tools 转为多个 --allowedTools。"""
         args = ProcessManager.build_cli_args(
             _make_options(allowed_tools=["Read", "Write"]),
-            team_name="t", color="blue", parent_session_id="s",
+            team_name="t",
+            color="blue",
+            parent_session_id="s",
         )
         indices = [i for i, a in enumerate(args) if a == "--allowedTools"]
         assert len(indices) == 2
@@ -426,7 +448,9 @@ class TestBuildCliArgs:
         """disallowed_tools 转为多个 --disallowedTools。"""
         args = ProcessManager.build_cli_args(
             _make_options(disallowed_tools=["Bash"]),
-            team_name="t", color="blue", parent_session_id="s",
+            team_name="t",
+            color="blue",
+            parent_session_id="s",
         )
         assert "--disallowedTools" in args
         idx = args.index("--disallowedTools")
@@ -436,7 +460,9 @@ class TestBuildCliArgs:
         """无可选参数时不添加额外标志。"""
         args = ProcessManager.build_cli_args(
             _make_options(),
-            team_name="t", color="blue", parent_session_id="s",
+            team_name="t",
+            color="blue",
+            parent_session_id="s",
         )
         assert "--plan-mode-required" not in args
         assert "--permission-mode" not in args
@@ -454,24 +480,18 @@ class TestFindClaudeBinary:
     def _clear_cache(self) -> None:
         _find_claude_binary.cache_clear()
 
-    def test_env_variable_takes_priority(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_env_variable_takes_priority(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """CC_TEAM_CLAUDE_BIN 环境变量优先。"""
         monkeypatch.setenv("CC_TEAM_CLAUDE_BIN", "/custom/claude")
         assert _find_claude_binary() == "/custom/claude"
 
-    def test_falls_back_to_which(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_falls_back_to_which(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """无环境变量时使用 shutil.which。"""
         monkeypatch.delenv("CC_TEAM_CLAUDE_BIN", raising=False)
         with patch("cc_team.process_manager.shutil.which", return_value="/usr/bin/claude"):
             assert _find_claude_binary() == "/usr/bin/claude"
 
-    def test_ultimate_fallback(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_ultimate_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """which 也找不到时 fallback 为 "claude"。"""
         monkeypatch.delenv("CC_TEAM_CLAUDE_BIN", raising=False)
         with patch("cc_team.process_manager.shutil.which", return_value=None):
@@ -491,7 +511,9 @@ class TestSendInput:
         pm = ProcessManager(tmux=tmux)
         await pm.spawn(
             _make_options(name="dev"),
-            team_name="t", color="blue", parent_session_id="s",
+            team_name="t",
+            color="blue",
+            parent_session_id="s",
         )
 
         await pm.send_input("dev", "hello world")

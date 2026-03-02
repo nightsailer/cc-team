@@ -419,9 +419,7 @@ class TestTeamManagerProperties:
         """team_name 属性返回绑定的团队名。"""
         assert manager.team_name == "test-team"
 
-    def test_config_path_property(
-        self, manager: TeamManager, isolated_home: Path
-    ) -> None:
+    def test_config_path_property(self, manager: TeamManager, isolated_home: Path) -> None:
         """config_path 指向正确的路径。"""
         expected = isolated_home / "teams" / "test-team" / "config.json"
         assert manager.config_path == expected
@@ -551,8 +549,10 @@ class TestUpdateMemberInvalidField:
             nonexistent_field="should-be-ignored",
         )
         assert updated.cwd == "/valid-update"
-        assert not hasattr(updated, "nonexistent_field") or \
-               getattr(updated, "nonexistent_field", None) is None
+        assert (
+            not hasattr(updated, "nonexistent_field")
+            or getattr(updated, "nonexistent_field", None) is None
+        )
 
 
 # ── Session 管理 [R4] ──────────────────────────────────────
@@ -633,6 +633,7 @@ class TestRegisterMember:
         inbox_path = paths_mod.inbox_path("test-team", "bot1")
         assert inbox_path.exists()
         import json
+
         assert json.loads(inbox_path.read_text()) == []
 
     @pytest.mark.asyncio

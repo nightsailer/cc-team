@@ -61,6 +61,4 @@ class CyclicDependencyError(CCTeamError):
     def __init__(self, task_id: str, blocked_by: list[str]) -> None:
         self.task_id = task_id
         self.blocked_by = blocked_by
-        super().__init__(
-            f"Adding dependency {blocked_by} to task {task_id!r} would create a cycle"
-        )
+        super().__init__(f"Adding dependency {blocked_by} to task {task_id!r} would create a cycle")

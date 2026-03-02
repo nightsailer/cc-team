@@ -127,7 +127,9 @@ class TestSendTaskAssignment:
     async def test_writes_task_info(self, builder: MessageBuilder) -> None:
         """任务信息正确写入 inbox。"""
         task = TaskFile(
-            id="42", subject="Build feature", description="Details here",
+            id="42",
+            subject="Build feature",
+            description="Details here",
         )
         await builder.send_task_assignment("worker-1", task)
 
@@ -160,7 +162,10 @@ class TestSendPlanApproval:
     async def test_reject_with_feedback(self, builder: MessageBuilder) -> None:
         """拒绝计划含反馈。"""
         await builder.send_plan_approval(
-            "agent-1", "req-1", approved=False, feedback="Need more detail",
+            "agent-1",
+            "req-1",
+            approved=False,
+            feedback="Need more detail",
         )
         msgs = _read_inbox("test-team", "agent-1")
         body = json.loads(msgs[0]["text"])
@@ -217,7 +222,8 @@ class TestSendSessionRelay:
 
     @pytest.mark.asyncio
     async def test_send_session_relay_empty_recipients(
-        self, builder: MessageBuilder,
+        self,
+        builder: MessageBuilder,
     ) -> None:
         """空接收列表不操作。"""
         await builder.send_session_relay(

@@ -74,6 +74,7 @@ class TeamManager:
         team_dir = paths.team_dir(self._team_name)
         if self._config_path.exists():
             from cc_team.exceptions import TeamAlreadyExistsError
+
             raise TeamAlreadyExistsError(self._team_name)
         team_dir.mkdir(parents=True, exist_ok=True)
 

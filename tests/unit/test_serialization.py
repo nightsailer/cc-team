@@ -44,8 +44,13 @@ class TestKeyMapping:
     def test_snake_to_camel_basic(self) -> None:
         """agent_id → agentId。"""
         member = TeamMember(
-            agent_id="a@t", name="a", agent_type="general-purpose",
-            model="m", joined_at=0, tmux_pane_id="", cwd="/",
+            agent_id="a@t",
+            name="a",
+            agent_type="general-purpose",
+            model="m",
+            joined_at=0,
+            tmux_pane_id="",
+            cwd="/",
         )
         d = to_json_dict(member)
         assert "agentId" in d
@@ -159,9 +164,13 @@ class TestJsonDictConversion:
             lead_session_id="uuid",
             members=[
                 TeamMember(
-                    agent_id="team-lead@t", name="team-lead",
-                    agent_type="team-lead", model="m",
-                    joined_at=1000, tmux_pane_id="", cwd="/",
+                    agent_id="team-lead@t",
+                    name="team-lead",
+                    agent_type="team-lead",
+                    model="m",
+                    joined_at=1000,
+                    tmux_pane_id="",
+                    cwd="/",
                 ),
             ],
         )
@@ -180,10 +189,15 @@ class TestJsonDictConversion:
             lead_session_id="uuid",
             members=[
                 TeamMember(
-                    agent_id="worker@t", name="worker",
-                    agent_type="general-purpose", model="sonnet",
-                    joined_at=2000, tmux_pane_id="%5", cwd="/home",
-                    is_active=True, backend_type="tmux",
+                    agent_id="worker@t",
+                    name="worker",
+                    agent_type="general-purpose",
+                    model="sonnet",
+                    joined_at=2000,
+                    tmux_pane_id="%5",
+                    cwd="/home",
+                    is_active=True,
+                    backend_type="tmux",
                 ),
             ],
         )
@@ -213,9 +227,13 @@ class TestJsonDictConversion:
             lead_session_id="uuid",
             members=[
                 TeamMember(
-                    agent_id="team-lead@t", name="team-lead",
-                    agent_type="team-lead", model="m",
-                    joined_at=1000, tmux_pane_id="", cwd="/",
+                    agent_id="team-lead@t",
+                    name="team-lead",
+                    agent_type="team-lead",
+                    model="m",
+                    joined_at=1000,
+                    tmux_pane_id="",
+                    cwd="/",
                     # prompt, color, plan_mode_required, backend_type, is_active
                     # are all None by default
                 ),
@@ -243,8 +261,11 @@ class TestInboxMessageSerialization:
 
     def test_to_dict_with_optional(self) -> None:
         msg = InboxMessage(
-            from_="worker", text="done", timestamp="t",
-            summary="Task done", color="blue",
+            from_="worker",
+            text="done",
+            timestamp="t",
+            summary="Task done",
+            color="blue",
         )
         d = inbox_message_to_dict(msg)
         assert d["summary"] == "Task done"
@@ -259,8 +280,12 @@ class TestInboxMessageSerialization:
 
     def test_from_dict_with_optional(self) -> None:
         data = {
-            "from": "w", "text": "x", "timestamp": "t",
-            "read": False, "summary": "s", "color": "green",
+            "from": "w",
+            "text": "x",
+            "timestamp": "t",
+            "read": False,
+            "summary": "s",
+            "color": "green",
         }
         msg = inbox_message_from_dict(data)
         assert msg.summary == "s"
@@ -283,13 +308,15 @@ class TestParseMessageBody:
         assert parse_message_body('{"type": "unknown_type"}') is None
 
     def test_parse_shutdown_request(self) -> None:
-        text = json.dumps({
-            "type": "shutdown_request",
-            "requestId": "shutdown-123@w",
-            "from": "lead",
-            "reason": "done",
-            "timestamp": "t",
-        })
+        text = json.dumps(
+            {
+                "type": "shutdown_request",
+                "requestId": "shutdown-123@w",
+                "from": "lead",
+                "reason": "done",
+                "timestamp": "t",
+            }
+        )
         result = parse_message_body(text)
         assert result is not None
         msg_type, msg = result
@@ -299,16 +326,18 @@ class TestParseMessageBody:
 
     def test_parse_permission_request(self) -> None:
         """permission 系列的 snake_case 字段正确解析。"""
-        text = json.dumps({
-            "type": "permission_request",
-            "request_id": "perm-123-abc",
-            "agent_id": "delegate",
-            "tool_name": "Bash",
-            "tool_use_id": "toolu_1",
-            "description": "Run cmd",
-            "input": {"command": "ls"},
-            "permission_suggestions": [],
-        })
+        text = json.dumps(
+            {
+                "type": "permission_request",
+                "request_id": "perm-123-abc",
+                "agent_id": "delegate",
+                "tool_name": "Bash",
+                "tool_use_id": "toolu_1",
+                "description": "Run cmd",
+                "input": {"command": "ls"},
+                "permission_suggestions": [],
+            }
+        )
         result = parse_message_body(text)
         assert result is not None
         msg_type, msg = result
@@ -455,8 +484,11 @@ class TestTaskFileSerialization:
 
     def test_camel_case_keys(self) -> None:
         task = TaskFile(
-            id="1", subject="S", description="D",
-            active_form="Working", blocked_by=["2"],
+            id="1",
+            subject="S",
+            description="D",
+            active_form="Working",
+            blocked_by=["2"],
         )
         d = task_file_to_dict(task)
         assert "activeForm" in d
@@ -489,9 +521,14 @@ class TestTaskFileSerialization:
 
     def test_roundtrip(self) -> None:
         original = TaskFile(
-            id="3", subject="Test", description="Desc",
-            status="in_progress", active_form="Testing",
-            owner="tester", blocks=["4"], blocked_by=["1", "2"],
+            id="3",
+            subject="Test",
+            description="Desc",
+            status="in_progress",
+            active_form="Testing",
+            owner="tester",
+            blocks=["4"],
+            blocked_by=["1", "2"],
             metadata={"priority": "high"},
         )
         d = task_file_to_dict(original)
@@ -574,6 +611,7 @@ class TestReadJsonRetryBehavior:
             return original_read_text(self_path, encoding=encoding, **kw)
 
         import unittest.mock
+
         with unittest.mock.patch.object(Path, "read_text", patched_read_text):
             result = read_json(target)
 

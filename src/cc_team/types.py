@@ -36,7 +36,14 @@ AgentColor = Literal["blue", "green", "yellow", "purple", "orange", "pink", "cya
 
 # 8 色循环常量，按 spawn 注册顺序分配: AGENT_COLORS[index % 8]
 AGENT_COLORS: tuple[AgentColor, ...] = (
-    "blue", "green", "yellow", "purple", "orange", "pink", "cyan", "red"
+    "blue",
+    "green",
+    "yellow",
+    "purple",
+    "orange",
+    "pink",
+    "cyan",
+    "red",
 )
 
 MessageType = Literal[

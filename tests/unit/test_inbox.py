@@ -348,7 +348,5 @@ class TestInboxProperties:
 
     def test_inbox_path(self, inbox: InboxIO, isolated_home: Path) -> None:
         """inbox_path 指向正确路径。"""
-        expected = (
-            isolated_home / "teams" / "test-team" / "inboxes" / "worker-1.json"
-        )
+        expected = isolated_home / "teams" / "test-team" / "inboxes" / "worker-1.json"
         assert inbox.inbox_path == expected

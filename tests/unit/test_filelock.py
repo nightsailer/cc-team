@@ -136,23 +136,24 @@ class TestFileLockRetry:
                 raise BlockingIOError("locked")
             original_flock(fd, operation)
 
-
         async def mock_sleep(seconds: float) -> None:
             sleep_delays.append(seconds)
             # 不实际等待
 
         lock = FileLock(lock_path, base_delay_ms=50, max_attempts=5)
 
-        with patch.object(fcntl, "flock", side_effect=mock_flock), \
-             patch.object(asyncio, "sleep", side_effect=mock_sleep):
+        with (
+            patch.object(fcntl, "flock", side_effect=mock_flock),
+            patch.object(asyncio, "sleep", side_effect=mock_sleep),
+        ):
             async with lock.acquire():
                 pass
 
         # 验证延迟序列: 50ms, 100ms, 200ms (3 次重试后第 4 次成功)
         assert len(sleep_delays) == 3
-        assert sleep_delays[0] == pytest.approx(0.05)   # 50ms
-        assert sleep_delays[1] == pytest.approx(0.1)    # 100ms
-        assert sleep_delays[2] == pytest.approx(0.2)    # 200ms
+        assert sleep_delays[0] == pytest.approx(0.05)  # 50ms
+        assert sleep_delays[1] == pytest.approx(0.1)  # 100ms
+        assert sleep_delays[2] == pytest.approx(0.2)  # 200ms
 
     @pytest.mark.asyncio
     async def test_delay_capped_at_max(self, tmp_path: Path) -> None:
@@ -176,8 +177,10 @@ class TestFileLockRetry:
         # base_delay_ms=200, max 4 retries: 200, 400, 500(capped), 500(capped)
         lock = FileLock(lock_path, base_delay_ms=200, max_attempts=5)
 
-        with patch.object(fcntl, "flock", side_effect=mock_flock), \
-             patch.object(asyncio, "sleep", side_effect=mock_sleep):
+        with (
+            patch.object(fcntl, "flock", side_effect=mock_flock),
+            patch.object(asyncio, "sleep", side_effect=mock_sleep),
+        ):
             async with lock.acquire():
                 pass
 
@@ -206,9 +209,11 @@ class TestFileLockError:
 
         lock = FileLock(lock_path, max_attempts=3, base_delay_ms=1)
 
-        with patch.object(fcntl, "flock", side_effect=always_fail), \
-             patch.object(asyncio, "sleep", side_effect=noop_sleep), \
-             pytest.raises(FileLockError) as exc_info:
+        with (
+            patch.object(fcntl, "flock", side_effect=always_fail),
+            patch.object(asyncio, "sleep", side_effect=noop_sleep),
+            pytest.raises(FileLockError) as exc_info,
+        ):
             async with lock.acquire():
                 pass
 
@@ -235,8 +240,10 @@ class TestFileLockError:
 
         lock = FileLock(lock_path, base_delay_ms=1)
 
-        with patch.object(fcntl, "flock", side_effect=mock_flock), \
-             patch.object(asyncio, "sleep", side_effect=noop_sleep):
+        with (
+            patch.object(fcntl, "flock", side_effect=mock_flock),
+            patch.object(asyncio, "sleep", side_effect=noop_sleep),
+        ):
             async with lock.acquire():
                 assert attempt_count == 2
 

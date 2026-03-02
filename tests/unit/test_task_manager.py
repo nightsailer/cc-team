@@ -202,9 +202,7 @@ class TestTaskUpdate:
     @pytest.mark.asyncio
     async def test_update_metadata_merge(self, mgr: TaskManager) -> None:
         """metadata 应合并而非替换。"""
-        task = await mgr.create(
-            subject="T", description="d", metadata={"key1": "val1"}
-        )
+        task = await mgr.create(subject="T", description="d", metadata={"key1": "val1"})
         updated = await mgr.update(task.id, metadata={"key2": "val2"})
         assert updated.metadata == {"key1": "val1", "key2": "val2"}
 
@@ -434,9 +432,7 @@ class TestAutoIncrementID:
 class TestTaskManagerProperties:
     """属性测试。"""
 
-    def test_tasks_dir_property(
-        self, mgr: TaskManager, isolated_home: Path
-    ) -> None:
+    def test_tasks_dir_property(self, mgr: TaskManager, isolated_home: Path) -> None:
         """tasks_dir 指向正确路径。"""
         expected = isolated_home / "tasks" / "test-team"
         assert mgr.tasks_dir == expected

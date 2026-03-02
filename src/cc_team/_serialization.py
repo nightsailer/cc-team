@@ -106,12 +106,14 @@ _PYTHON_TO_JSON: dict[str, str] = {
 # 反向映射: JSON key → Python field
 _JSON_TO_PYTHON: dict[str, str] = {v: k for k, v in _PYTHON_TO_JSON.items()}
 # 补充: permission 系列的 snake_case 字段也需要映射
-_JSON_TO_PYTHON.update({
-    "from": "from_",
-    # agent_id 在 permission 消息中保持 snake_case
-    "agent_id": "agent_id",
-    "request_id": "request_id",  # snake_case 版本
-})
+_JSON_TO_PYTHON.update(
+    {
+        "from": "from_",
+        # agent_id 在 permission 消息中保持 snake_case
+        "agent_id": "agent_id",
+        "request_id": "request_id",  # snake_case 版本
+    }
+)
 
 # Permission 系列类型集合 — 这些类型中特定字段保持 snake_case
 _PERMISSION_TYPES: set[type] = {
@@ -121,7 +123,10 @@ _PERMISSION_TYPES: set[type] = {
 
 # Permission 系列中保持 snake_case 的字段
 _PERMISSION_SNAKE_FIELDS: set[str] = {
-    "request_id", "agent_id", "tool_name", "tool_use_id",
+    "request_id",
+    "agent_id",
+    "tool_name",
+    "tool_use_id",
     "permission_suggestions",
 }
 
@@ -242,6 +247,7 @@ _MESSAGE_TYPE_MAP: dict[str, type] = {
     "permission_response": PermissionResponseMessage,
     "session_relay": SessionRelayMessage,
 }
+
 
 def parse_message_body(text: str) -> tuple[str, Any] | None:
     """尝试解析 InboxMessage.text 为结构化消息。

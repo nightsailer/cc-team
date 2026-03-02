@@ -331,24 +331,21 @@ class TestTaskManagement:
         await ctrl.shutdown()
 
     @pytest.mark.asyncio
-    async def test_create_task_with_owner_sends_assignment(
-        self, ctrl: Controller
-    ) -> None:
+    async def test_create_task_with_owner_sends_assignment(self, ctrl: Controller) -> None:
         """创建带 owner 的任务应发送 task_assignment。"""
         await ctrl.init()
         await ctrl.spawn(SpawnAgentOptions(name="dev", prompt="hi"))
 
         await ctrl.create_task(
-            subject="Feature", description="d", owner="dev",
+            subject="Feature",
+            description="d",
+            owner="dev",
         )
 
         inbox_path = paths_mod.inbox_path("test-team", "dev")
         msgs = json.loads(inbox_path.read_text())
         # 找到 task_assignment 消息
-        assignments = [
-            m for m in msgs
-            if '"task_assignment"' in m.get("text", "")
-        ]
+        assignments = [m for m in msgs if '"task_assignment"' in m.get("text", "")]
         assert len(assignments) >= 1
         await ctrl.shutdown()
 
@@ -362,9 +359,7 @@ class TestTaskManagement:
         await ctrl.shutdown()
 
     @pytest.mark.asyncio
-    async def test_update_task_completed_emits_event(
-        self, ctrl: Controller
-    ) -> None:
+    async def test_update_task_completed_emits_event(self, ctrl: Controller) -> None:
         """任务完成时发射 task:completed 事件。"""
         await ctrl.init()
         captured: list[str] = []
@@ -643,7 +638,9 @@ class TestAttach:
 
     @pytest.mark.asyncio
     async def test_attach_team_not_found(
-        self, isolated_home: Path, mock_pm: ProcessManager,
+        self,
+        isolated_home: Path,
+        mock_pm: ProcessManager,
     ) -> None:
         """attach 到不存在的团队应抛出 FileNotFoundError。"""
         c = Controller(
@@ -657,6 +654,7 @@ class TestAttach:
     async def test_attach_double_raises(self, isolated_home: Path, mock_pm: ProcessManager) -> None:
         """重复 attach 抛出 NotInitializedError。"""
         from cc_team.team_manager import TeamManager
+
         mgr = TeamManager("test-team")
         await mgr.create(lead_session_id="s1")
 
@@ -682,19 +680,35 @@ class TestAttach:
         mgr = TeamManager("test-team")
         await mgr.create(lead_session_id="s1")
         # 添加 active agent
-        await mgr.add_member(TeamMember(
-            agent_id="a@test-team", name="active-agent",
-            agent_type="general-purpose", model="claude-sonnet-4-6",
-            joined_at=now_ms(), tmux_pane_id="%10", cwd="/tmp",
-            color="blue", is_active=True, backend_type="tmux",
-        ))
+        await mgr.add_member(
+            TeamMember(
+                agent_id="a@test-team",
+                name="active-agent",
+                agent_type="general-purpose",
+                model="claude-sonnet-4-6",
+                joined_at=now_ms(),
+                tmux_pane_id="%10",
+                cwd="/tmp",
+                color="blue",
+                is_active=True,
+                backend_type="tmux",
+            )
+        )
         # 添加 inactive agent
-        await mgr.add_member(TeamMember(
-            agent_id="i@test-team", name="inactive-agent",
-            agent_type="general-purpose", model="claude-sonnet-4-6",
-            joined_at=now_ms(), tmux_pane_id="%11", cwd="/tmp",
-            color="green", is_active=False, backend_type="tmux",
-        ))
+        await mgr.add_member(
+            TeamMember(
+                agent_id="i@test-team",
+                name="inactive-agent",
+                agent_type="general-purpose",
+                model="claude-sonnet-4-6",
+                joined_at=now_ms(),
+                tmux_pane_id="%11",
+                cwd="/tmp",
+                color="green",
+                is_active=False,
+                backend_type="tmux",
+            )
+        )
 
         c = Controller(
             ControllerOptions(team_name="test-team"),
@@ -726,6 +740,7 @@ class TestShutdownConditionalDestroy:
     ) -> None:
         """attach() 后 shutdown 不应销毁团队。"""
         from cc_team.team_manager import TeamManager
+
         mgr = TeamManager("test-team")
         await mgr.create(lead_session_id="s1")
 
@@ -817,7 +832,9 @@ class TestSyncAgents:
 
     @pytest.mark.asyncio
     async def test_sync_agents_recovers_alive_panes(
-        self, isolated_home: Path, mock_pm: ProcessManager,
+        self,
+        isolated_home: Path,
+        mock_pm: ProcessManager,
     ) -> None:
         """存活 pane 应恢复为 handle。"""
         from cc_team.team_manager import TeamManager
@@ -825,12 +842,20 @@ class TestSyncAgents:
 
         mgr = TeamManager("test-team")
         await mgr.create(lead_session_id="s1")
-        await mgr.add_member(TeamMember(
-            agent_id="w@test-team", name="worker",
-            agent_type="general-purpose", model="claude-sonnet-4-6",
-            joined_at=FIXED_MS, tmux_pane_id="%68", cwd="/tmp",
-            color="blue", is_active=True, backend_type="tmux",
-        ))
+        await mgr.add_member(
+            TeamMember(
+                agent_id="w@test-team",
+                name="worker",
+                agent_type="general-purpose",
+                model="claude-sonnet-4-6",
+                joined_at=FIXED_MS,
+                tmux_pane_id="%68",
+                cwd="/tmp",
+                color="blue",
+                is_active=True,
+                backend_type="tmux",
+            )
+        )
 
         # mock_pm 的 is_running 需要 pane 被 track
         # mock_pm 使用 mock tmux，is_pane_alive 默认返回 True
@@ -852,7 +877,8 @@ class TestSyncAgents:
 
     @pytest.mark.asyncio
     async def test_sync_agents_marks_dead_inactive(
-        self, isolated_home: Path,
+        self,
+        isolated_home: Path,
     ) -> None:
         """死亡 pane 应标记为 inactive。"""
         from cc_team.team_manager import TeamManager
@@ -860,12 +886,20 @@ class TestSyncAgents:
 
         mgr = TeamManager("test-team")
         await mgr.create(lead_session_id="s1")
-        await mgr.add_member(TeamMember(
-            agent_id="d@test-team", name="dead-agent",
-            agent_type="general-purpose", model="claude-sonnet-4-6",
-            joined_at=FIXED_MS, tmux_pane_id="%55", cwd="/tmp",
-            color="green", is_active=True, backend_type="tmux",
-        ))
+        await mgr.add_member(
+            TeamMember(
+                agent_id="d@test-team",
+                name="dead-agent",
+                agent_type="general-purpose",
+                model="claude-sonnet-4-6",
+                joined_at=FIXED_MS,
+                tmux_pane_id="%55",
+                cwd="/tmp",
+                color="green",
+                is_active=True,
+                backend_type="tmux",
+            )
+        )
 
         # 创建 PM，pane 不存活
         dead_tmux = _mock_tmux()
@@ -891,7 +925,8 @@ class TestSyncAgents:
 
     @pytest.mark.asyncio
     async def test_attach_uses_sync_agents(
-        self, isolated_home: Path,
+        self,
+        isolated_home: Path,
     ) -> None:
         """attach 使用 sync_agents，ghost pane 不在 handles 中。"""
         from cc_team.team_manager import TeamManager
@@ -900,18 +935,34 @@ class TestSyncAgents:
         mgr = TeamManager("test-team")
         await mgr.create(lead_session_id="s1")
         # 一个存活 + 一个死亡
-        await mgr.add_member(TeamMember(
-            agent_id="alive@test-team", name="alive-agent",
-            agent_type="general-purpose", model="claude-sonnet-4-6",
-            joined_at=FIXED_MS, tmux_pane_id="%10", cwd="/tmp",
-            color="blue", is_active=True, backend_type="tmux",
-        ))
-        await mgr.add_member(TeamMember(
-            agent_id="ghost@test-team", name="ghost-agent",
-            agent_type="general-purpose", model="claude-sonnet-4-6",
-            joined_at=FIXED_MS, tmux_pane_id="%99", cwd="/tmp",
-            color="green", is_active=True, backend_type="tmux",
-        ))
+        await mgr.add_member(
+            TeamMember(
+                agent_id="alive@test-team",
+                name="alive-agent",
+                agent_type="general-purpose",
+                model="claude-sonnet-4-6",
+                joined_at=FIXED_MS,
+                tmux_pane_id="%10",
+                cwd="/tmp",
+                color="blue",
+                is_active=True,
+                backend_type="tmux",
+            )
+        )
+        await mgr.add_member(
+            TeamMember(
+                agent_id="ghost@test-team",
+                name="ghost-agent",
+                agent_type="general-purpose",
+                model="claude-sonnet-4-6",
+                joined_at=FIXED_MS,
+                tmux_pane_id="%99",
+                cwd="/tmp",
+                color="green",
+                is_active=True,
+                backend_type="tmux",
+            )
+        )
 
         # tmux mock: %10 存活, %99 死亡
         mixed_tmux = _mock_tmux()
@@ -958,10 +1009,7 @@ class TestRelayBroadcast:
         for name in ["w1", "w2"]:
             inbox_path = paths_mod.inbox_path("test-team", name)
             msgs = json.loads(inbox_path.read_text())
-            relay_msgs = [
-                m for m in msgs
-                if '"session_relay"' in m.get("text", "")
-            ]
+            relay_msgs = [m for m in msgs if '"session_relay"' in m.get("text", "")]
             assert len(relay_msgs) >= 1
             body = json.loads(relay_msgs[0]["text"])
             assert body["type"] == "session_relay"

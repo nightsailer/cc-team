@@ -47,6 +47,7 @@ class ClearMode(enum.Enum):
     ESCAPE = "escape"
     SHELL = "shell"
 
+
 # Runner type: compatible with asyncio.create_subprocess_exec signature
 Runner = Callable[..., Coroutine[Any, Any, asyncio.subprocess.Process]]
 
@@ -78,11 +79,11 @@ _PANE_ID_RE = re.compile(r"^%\d+$")
 class PaneState(enum.Enum):
     """Tmux pane activity state detected from captured output."""
 
-    ACTIVE = "active"           # Matches _PROCESSING_RE (Thinking/Running/⏺)
-    READY = "ready"             # Matches prompt (❯ / $ / ⏵)
-    WAITING_INPUT = "waiting"   # Matches "Press up to edit queued messages"
-    IDLE = "idle"               # No pattern matched
-    UNKNOWN = "unknown"         # Capture failed
+    ACTIVE = "active"  # Matches _PROCESSING_RE (Thinking/Running/⏺)
+    READY = "ready"  # Matches prompt (❯ / $ / ⏵)
+    WAITING_INPUT = "waiting"  # Matches "Press up to edit queued messages"
+    IDLE = "idle"  # No pattern matched
+    UNKNOWN = "unknown"  # Capture failed
 
 
 class TmuxManager:
@@ -139,9 +140,7 @@ class TmuxManager:
         Returns the stripped output, or None if the command fails.
         """
         try:
-            stdout = await self._exec(
-                ["tmux", "display-message", "-t", pane_id, "-p", fmt]
-            )
+            stdout = await self._exec(["tmux", "display-message", "-t", pane_id, "-p", fmt])
             value = stdout.strip()
             return value if value else None
         except TmuxError:
@@ -160,9 +159,7 @@ class TmuxManager:
     async def notify(self, message: str, *, duration_ms: int = 5000) -> None:
         """Send a notification via tmux display-message. Silently fails."""
         with contextlib.suppress(TmuxError):
-            await self._exec(
-                ["tmux", "display-message", "-d", str(duration_ms), message]
-            )
+            await self._exec(["tmux", "display-message", "-d", str(duration_ms), message])
 
     async def notify_pane(
         self,
@@ -224,9 +221,7 @@ class TmuxManager:
         else:
             await self._send_keys_long(pane_id, text, press_enter=press_enter)
 
-    async def _send_keys_short(
-        self, pane_id: str, text: str, *, press_enter: bool
-    ) -> None:
+    async def _send_keys_short(self, pane_id: str, text: str, *, press_enter: bool) -> None:
         """Short text: tmux send-keys -l (literal mode)."""
         await self._exec(["tmux", "send-keys", "-t", pane_id, "-l", text])
         if press_enter:
@@ -252,9 +247,7 @@ class TmuxManager:
         await self._exec(["tmux", "send-keys", "-t", pane_id, "C-u"])
         await asyncio.sleep(0.1)
 
-    async def _send_keys_long(
-        self, pane_id: str, text: str, *, press_enter: bool
-    ) -> None:
+    async def _send_keys_long(self, pane_id: str, text: str, *, press_enter: bool) -> None:
         """Long text: load-buffer + paste-buffer strategy.
 
         Sequence:
@@ -308,9 +301,7 @@ class TmuxManager:
             # (-d flag normally removes it, but we ensure no leak)
             if buf_name is not None:
                 with contextlib.suppress(TmuxError):
-                    await self._exec(
-                        ["tmux", "delete-buffer", "-b", buf_name]
-                    )
+                    await self._exec(["tmux", "delete-buffer", "-b", buf_name])
 
         # 6. Brief delay for paste to take effect
         await asyncio.sleep(0.05)
@@ -393,9 +384,7 @@ class TmuxManager:
         last = max_retries - 1
         for attempt in range(max_retries):
             try:
-                await self._exec(
-                    ["tmux", "send-keys", "-t", pane_id, _ENTER_KEY]
-                )
+                await self._exec(["tmux", "send-keys", "-t", pane_id, _ENTER_KEY])
             except TmuxError:
                 if attempt < last:
                     await asyncio.sleep(retry_delay)
@@ -408,9 +397,7 @@ class TmuxManager:
             except TmuxError:
                 continue
 
-            if content_after != content_before or _PROCESSING_RE.search(
-                content_after
-            ):
+            if content_after != content_before or _PROCESSING_RE.search(content_after):
                 return True
         return False
 

@@ -24,7 +24,9 @@ from cc_team.types import InboxMessage
 
 def _msg(from_: str = "worker-1", text: str = "hello") -> InboxMessage:
     return InboxMessage(
-        from_=from_, text=text, timestamp="2026-02-28T10:00:00.000Z",
+        from_=from_,
+        text=text,
+        timestamp="2026-02-28T10:00:00.000Z",
     )
 
 

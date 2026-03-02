@@ -90,9 +90,17 @@ class TestFullLifecycle:
         self, isolated_home: Path, parser, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """步骤 1: 建立新的 TEAM 团队。"""
-        await _run_cmd(parser, _team_args(
-            "team", "create", "--name", TEAM_NAME, "--description", "集成测试团队",
-        ))
+        await _run_cmd(
+            parser,
+            _team_args(
+                "team",
+                "create",
+                "--name",
+                TEAM_NAME,
+                "--description",
+                "集成测试团队",
+            ),
+        )
 
         output = json.loads(capsys.readouterr().out)
         assert output["name"] == TEAM_NAME
@@ -111,29 +119,53 @@ class TestFullLifecycle:
     ) -> None:
         """步骤 2: 加入一个工程师和一个测试员，并验证消息通达。"""
         # 创建团队
-        await _run_cmd(parser, _team_args(
-            "team", "create", "--name", TEAM_NAME, "--description", "测试",
-        ))
+        await _run_cmd(
+            parser,
+            _team_args(
+                "team",
+                "create",
+                "--name",
+                TEAM_NAME,
+                "--description",
+                "测试",
+            ),
+        )
         capsys.readouterr()  # 清空输出
 
         # Spawn 工程师
         mock_process_manager.spawn = AsyncMock(return_value="%1")
-        await _run_cmd(parser, _team_args(
-            "agent", "spawn", "--name", "engineer",
-            "--prompt", "你是工程师，负责编写代码",
-            "--type", "general-purpose",
-        ))
+        await _run_cmd(
+            parser,
+            _team_args(
+                "agent",
+                "spawn",
+                "--name",
+                "engineer",
+                "--prompt",
+                "你是工程师，负责编写代码",
+                "--type",
+                "general-purpose",
+            ),
+        )
         engineer_out = json.loads(capsys.readouterr().out)
         assert engineer_out["name"] == "engineer"
         assert engineer_out["backend_id"] == "%1"
 
         # Spawn 测试员
         mock_process_manager.spawn = AsyncMock(return_value="%2")
-        await _run_cmd(parser, _team_args(
-            "agent", "spawn", "--name", "tester",
-            "--prompt", "你是测试员，负责编写测试",
-            "--type", "general-purpose",
-        ))
+        await _run_cmd(
+            parser,
+            _team_args(
+                "agent",
+                "spawn",
+                "--name",
+                "tester",
+                "--prompt",
+                "你是测试员，负责编写测试",
+                "--type",
+                "general-purpose",
+            ),
+        )
         tester_out = json.loads(capsys.readouterr().out)
         assert tester_out["name"] == "tester"
         assert tester_out["backend_id"] == "%2"
@@ -149,11 +181,19 @@ class TestFullLifecycle:
         assert tester_inbox[0]["text"] == "你是测试员，负责编写测试"
 
         # 向工程师发送消息
-        await _run_cmd(parser, _team_args(
-            "message", "send", "--to", "engineer",
-            "--content", "请开始实现登录模块",
-            "--summary", "任务指令",
-        ))
+        await _run_cmd(
+            parser,
+            _team_args(
+                "message",
+                "send",
+                "--to",
+                "engineer",
+                "--content",
+                "请开始实现登录模块",
+                "--summary",
+                "任务指令",
+            ),
+        )
         capsys.readouterr()  # 清空 message send 输出
 
         # 验证: 工程师 inbox 应有 2 条消息
@@ -163,11 +203,19 @@ class TestFullLifecycle:
         assert engineer_inbox[1]["summary"] == "任务指令"
 
         # 向测试员发送消息
-        await _run_cmd(parser, _team_args(
-            "message", "send", "--to", "tester",
-            "--content", "请为登录模块编写测试",
-            "--summary", "测试任务",
-        ))
+        await _run_cmd(
+            parser,
+            _team_args(
+                "message",
+                "send",
+                "--to",
+                "tester",
+                "--content",
+                "请为登录模块编写测试",
+                "--summary",
+                "测试任务",
+            ),
+        )
         capsys.readouterr()  # 清空 message send 输出
 
         # 验证: 测试员 inbox 应有 2 条消息
@@ -191,25 +239,50 @@ class TestFullLifecycle:
     ) -> None:
         """步骤 3a: 新增一个队员，验证消息通达。"""
         # 建立团队 + 初始成员
-        await _run_cmd(parser, _team_args(
-            "team", "create", "--name", TEAM_NAME, "--description", "测试",
-        ))
+        await _run_cmd(
+            parser,
+            _team_args(
+                "team",
+                "create",
+                "--name",
+                TEAM_NAME,
+                "--description",
+                "测试",
+            ),
+        )
         capsys.readouterr()
 
         mock_process_manager.spawn = AsyncMock(return_value="%1")
-        await _run_cmd(parser, _team_args(
-            "agent", "spawn", "--name", "engineer",
-            "--prompt", "工程师", "--type", "general-purpose",
-        ))
+        await _run_cmd(
+            parser,
+            _team_args(
+                "agent",
+                "spawn",
+                "--name",
+                "engineer",
+                "--prompt",
+                "工程师",
+                "--type",
+                "general-purpose",
+            ),
+        )
         capsys.readouterr()
 
         # 新增队员: reviewer
         mock_process_manager.spawn = AsyncMock(return_value="%3")
-        await _run_cmd(parser, _team_args(
-            "agent", "spawn", "--name", "reviewer",
-            "--prompt", "你是代码审查员",
-            "--type", "general-purpose",
-        ))
+        await _run_cmd(
+            parser,
+            _team_args(
+                "agent",
+                "spawn",
+                "--name",
+                "reviewer",
+                "--prompt",
+                "你是代码审查员",
+                "--type",
+                "general-purpose",
+            ),
+        )
         reviewer_out = json.loads(capsys.readouterr().out)
         assert reviewer_out["name"] == "reviewer"
 
@@ -219,11 +292,19 @@ class TestFullLifecycle:
         assert reviewer_inbox[0]["text"] == "你是代码审查员"
 
         # 发送消息验证通达
-        await _run_cmd(parser, _team_args(
-            "message", "send", "--to", "reviewer",
-            "--content", "请审查 PR #42",
-            "--summary", "审查请求",
-        ))
+        await _run_cmd(
+            parser,
+            _team_args(
+                "message",
+                "send",
+                "--to",
+                "reviewer",
+                "--content",
+                "请审查 PR #42",
+                "--summary",
+                "审查请求",
+            ),
+        )
         capsys.readouterr()  # 清空 message send 输出
 
         reviewer_inbox = _read_inbox(TEAM_NAME, "reviewer")
@@ -246,30 +327,64 @@ class TestFullLifecycle:
     ) -> None:
         """步骤 3b: 下线（kill）一个队员。"""
         # 建立团队 + 两个成员
-        await _run_cmd(parser, _team_args(
-            "team", "create", "--name", TEAM_NAME, "--description", "测试",
-        ))
+        await _run_cmd(
+            parser,
+            _team_args(
+                "team",
+                "create",
+                "--name",
+                TEAM_NAME,
+                "--description",
+                "测试",
+            ),
+        )
         capsys.readouterr()
 
         mock_process_manager.spawn = AsyncMock(return_value="%1")
-        await _run_cmd(parser, _team_args(
-            "agent", "spawn", "--name", "engineer",
-            "--prompt", "工程师", "--type", "general-purpose",
-        ))
+        await _run_cmd(
+            parser,
+            _team_args(
+                "agent",
+                "spawn",
+                "--name",
+                "engineer",
+                "--prompt",
+                "工程师",
+                "--type",
+                "general-purpose",
+            ),
+        )
         capsys.readouterr()
 
         mock_process_manager.spawn = AsyncMock(return_value="%2")
-        await _run_cmd(parser, _team_args(
-            "agent", "spawn", "--name", "tester",
-            "--prompt", "测试员", "--type", "general-purpose",
-        ))
+        await _run_cmd(
+            parser,
+            _team_args(
+                "agent",
+                "spawn",
+                "--name",
+                "tester",
+                "--prompt",
+                "测试员",
+                "--type",
+                "general-purpose",
+            ),
+        )
         capsys.readouterr()
 
         # Kill 测试员
-        await _run_cmd(parser, [
-            "--team-name", TEAM_NAME, "--quiet",
-            "agent", "kill", "--name", "tester",
-        ])
+        await _run_cmd(
+            parser,
+            [
+                "--team-name",
+                TEAM_NAME,
+                "--quiet",
+                "agent",
+                "kill",
+                "--name",
+                "tester",
+            ],
+        )
 
         # 验证: tester 已从团队移除
         await _run_cmd(parser, _team_args("team", "info"))
@@ -292,16 +407,33 @@ class TestFullLifecycle:
     ) -> None:
         """步骤 3c: 解散团队。"""
         # 建立团队 + 成员
-        await _run_cmd(parser, _team_args(
-            "team", "create", "--name", TEAM_NAME, "--description", "测试",
-        ))
+        await _run_cmd(
+            parser,
+            _team_args(
+                "team",
+                "create",
+                "--name",
+                TEAM_NAME,
+                "--description",
+                "测试",
+            ),
+        )
         capsys.readouterr()
 
         mock_process_manager.spawn = AsyncMock(return_value="%1")
-        await _run_cmd(parser, _team_args(
-            "agent", "spawn", "--name", "engineer",
-            "--prompt", "工程师", "--type", "general-purpose",
-        ))
+        await _run_cmd(
+            parser,
+            _team_args(
+                "agent",
+                "spawn",
+                "--name",
+                "engineer",
+                "--prompt",
+                "工程师",
+                "--type",
+                "general-purpose",
+            ),
+        )
         capsys.readouterr()
 
         # 确认团队目录和任务目录存在
@@ -311,10 +443,16 @@ class TestFullLifecycle:
         assert tasks_dir.exists()
 
         # 解散团队
-        await _run_cmd(parser, [
-            "--team-name", TEAM_NAME, "--quiet",
-            "team", "destroy",
-        ])
+        await _run_cmd(
+            parser,
+            [
+                "--team-name",
+                TEAM_NAME,
+                "--quiet",
+                "team",
+                "destroy",
+            ],
+        )
 
         # 验证: 团队目录已删除
         assert not team_dir.exists()
@@ -344,32 +482,63 @@ class TestMessageVerification:
     ) -> None:
         """消息发送 → inbox 写入 → 读取验证。"""
         # 创建团队
-        await _run_cmd(parser, _team_args(
-            "team", "create", "--name", TEAM_NAME, "--description", "消息测试",
-        ))
+        await _run_cmd(
+            parser,
+            _team_args(
+                "team",
+                "create",
+                "--name",
+                TEAM_NAME,
+                "--description",
+                "消息测试",
+            ),
+        )
         capsys.readouterr()
 
         # Spawn agent
         mock_process_manager.spawn = AsyncMock(return_value="%1")
-        await _run_cmd(parser, _team_args(
-            "agent", "spawn", "--name", "worker",
-            "--prompt", "初始任务",
-            "--type", "general-purpose",
-        ))
+        await _run_cmd(
+            parser,
+            _team_args(
+                "agent",
+                "spawn",
+                "--name",
+                "worker",
+                "--prompt",
+                "初始任务",
+                "--type",
+                "general-purpose",
+            ),
+        )
         capsys.readouterr()
 
         # 发送消息
-        await _run_cmd(parser, _team_args(
-            "message", "send", "--to", "worker",
-            "--content", "请汇报进度",
-            "--summary", "进度查询",
-        ))
+        await _run_cmd(
+            parser,
+            _team_args(
+                "message",
+                "send",
+                "--to",
+                "worker",
+                "--content",
+                "请汇报进度",
+                "--summary",
+                "进度查询",
+            ),
+        )
         capsys.readouterr()
 
         # 通过 CLI 读取 inbox 验证
-        await _run_cmd(parser, _team_args(
-            "message", "read", "--agent", "worker", "--all",
-        ))
+        await _run_cmd(
+            parser,
+            _team_args(
+                "message",
+                "read",
+                "--agent",
+                "worker",
+                "--all",
+            ),
+        )
         messages = json.loads(capsys.readouterr().out)
 
         # 应有 2 条: 初始 prompt + 后续消息
@@ -389,25 +558,46 @@ class TestMessageVerification:
     ) -> None:
         """广播消息到所有 agent，验证各 inbox 均收到。"""
         # 创建团队 + 两个 agent
-        await _run_cmd(parser, _team_args(
-            "team", "create", "--name", TEAM_NAME, "--description", "广播测试",
-        ))
+        await _run_cmd(
+            parser,
+            _team_args(
+                "team",
+                "create",
+                "--name",
+                TEAM_NAME,
+                "--description",
+                "广播测试",
+            ),
+        )
         capsys.readouterr()
 
         for name, pane in [("alpha", "%1"), ("beta", "%2")]:
             mock_process_manager.spawn = AsyncMock(return_value=pane)
-            await _run_cmd(parser, _team_args(
-                "agent", "spawn", "--name", name,
-                "--prompt", f"{name} 初始任务",
-            ))
+            await _run_cmd(
+                parser,
+                _team_args(
+                    "agent",
+                    "spawn",
+                    "--name",
+                    name,
+                    "--prompt",
+                    f"{name} 初始任务",
+                ),
+            )
             capsys.readouterr()
 
         # 广播
-        await _run_cmd(parser, _team_args(
-            "message", "broadcast",
-            "--content", "全员注意：代码冻结",
-            "--summary", "紧急通知",
-        ))
+        await _run_cmd(
+            parser,
+            _team_args(
+                "message",
+                "broadcast",
+                "--content",
+                "全员注意：代码冻结",
+                "--summary",
+                "紧急通知",
+            ),
+        )
 
         # 验证: 两个 agent 的 inbox 都有广播消息
         for name in ("alpha", "beta"):

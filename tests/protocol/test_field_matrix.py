@@ -63,16 +63,34 @@ class TestTeammateMemberFieldMatrix:
 
     def test_teammate_has_all_13_fields(self) -> None:
         mate = TeamMember(
-            agent_id="r@t", name="r", agent_type="general-purpose",
-            model="m", joined_at=1000, tmux_pane_id="%14", cwd="/",
-            prompt="Work", color="blue",
-            plan_mode_required=False, backend_type="tmux", is_active=True,
+            agent_id="r@t",
+            name="r",
+            agent_type="general-purpose",
+            model="m",
+            joined_at=1000,
+            tmux_pane_id="%14",
+            cwd="/",
+            prompt="Work",
+            color="blue",
+            plan_mode_required=False,
+            backend_type="tmux",
+            is_active=True,
         )
         d = to_json_dict(mate)
         expected_keys = {
-            "agentId", "name", "agentType", "model", "joinedAt",
-            "tmuxPaneId", "cwd", "subscriptions",
-            "prompt", "color", "planModeRequired", "backendType", "isActive",
+            "agentId",
+            "name",
+            "agentType",
+            "model",
+            "joinedAt",
+            "tmuxPaneId",
+            "cwd",
+            "subscriptions",
+            "prompt",
+            "color",
+            "planModeRequired",
+            "backendType",
+            "isActive",
         }
         assert expected_keys == set(d.keys())
 

@@ -94,8 +94,7 @@ class TaskManager:
     def list_available(self) -> list[TaskFile]:
         """列出可认领的任务（pending + 无 owner + blockedBy 为空）。"""
         return [
-            t for t in self.list_all()
-            if t.status == "pending" and not t.owner and not t.blocked_by
+            t for t in self.list_all() if t.status == "pending" and not t.owner and not t.blocked_by
         ]
 
     # ── 更新 ────────────────────────────────────────────────

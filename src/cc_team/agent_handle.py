@@ -64,9 +64,7 @@ class AgentHandle:
             content: 消息内容
             summary: 摘要文本（可选）
         """
-        await self._controller.send_message(
-            self._name, content, summary=summary
-        )
+        await self._controller.send_message(self._name, content, summary=summary)
 
     # ── 生命周期 ────────────────────────────────────────────
 
@@ -93,6 +91,5 @@ class AgentHandle:
 
     def __repr__(self) -> str:
         return (
-            f"AgentHandle(name={self._name!r}, "
-            f"backend={self._backend_id!r}, color={self._color!r})"
+            f"AgentHandle(name={self._name!r}, backend={self._backend_id!r}, color={self._color!r})"
         )

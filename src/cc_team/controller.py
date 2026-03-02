@@ -147,9 +147,7 @@ class Controller(AsyncEventEmitter):
 
         config = self._team_manager.read()
         if config is None:
-            raise FileNotFoundError(
-                f"Team '{self._options.team_name}' not found"
-            )
+            raise FileNotFoundError(f"Team '{self._options.team_name}' not found")
 
         # 使用配置中的 session_id
         self._session_id = config.lead_session_id
@@ -225,7 +223,8 @@ class Controller(AsyncEventEmitter):
     async def _start_poller(self) -> None:
         """创建并启动 Lead inbox 轮询器。"""
         self._poller = InboxPoller(
-            self._options.team_name, TEAM_LEAD_AGENT_TYPE,
+            self._options.team_name,
+            TEAM_LEAD_AGENT_TYPE,
         )
         self._poller.on_message(self._event_router.route)
         self._poller.on_error(self._on_poller_error)
@@ -260,13 +259,19 @@ class Controller(AsyncEventEmitter):
         Backend (ProcessManager._panes) is already populated by spawn/track.
         """
         handle = AgentHandle(
-            name, self, backend_id=backend_id, color=color,
+            name,
+            self,
+            backend_id=backend_id,
+            color=color,
         )
         self._handles[name] = handle
         return handle
 
     async def _deregister_agent(
-        self, name: str, *, force_kill: bool = False,
+        self,
+        name: str,
+        *,
+        force_kill: bool = False,
     ) -> None:
         """Remove agent from all tracking sources (single exit point).
 
@@ -319,7 +324,8 @@ class Controller(AsyncEventEmitter):
             if not alive:
                 self._process_manager.untrack(member.name)
                 await self._team_manager.update_member(
-                    member.name, is_active=False,
+                    member.name,
+                    is_active=False,
                 )
                 continue
 
@@ -357,7 +363,9 @@ class Controller(AsyncEventEmitter):
         )
 
         handle = self._register_agent(
-            options.name, backend_id=backend_id, color=color,
+            options.name,
+            backend_id=backend_id,
+            color=color,
         )
 
         await self.emit("agent:spawned", options.name, backend_id)
@@ -392,7 +400,9 @@ class Controller(AsyncEventEmitter):
         if self._team_manager.get_member(recipient) is None:
             raise AgentNotFoundError(recipient)
         await self._message_builder.send_plain(
-            recipient, content, summary=summary,
+            recipient,
+            content,
+            summary=summary,
         )
 
     async def send_shutdown_request(self, agent_name: str, reason: str) -> str:
@@ -420,12 +430,11 @@ class Controller(AsyncEventEmitter):
     ) -> None:
         """广播消息到所有 Agent。"""
         self._check_initialized()
-        recipients = [
-            name for name in self._handles
-            if not exclude or name not in exclude
-        ]
+        recipients = [name for name in self._handles if not exclude or name not in exclude]
         await self._message_builder.broadcast(
-            content, recipients, summary=summary,
+            content,
+            recipients,
+            summary=summary,
         )
 
     async def send_plan_approval(
@@ -440,7 +449,8 @@ class Controller(AsyncEventEmitter):
         """发送计划审批响应。"""
         self._check_initialized()
         await self._message_builder.send_plan_approval(
-            agent_name, request_id,
+            agent_name,
+            request_id,
             approved=approved,
             permission_mode=permission_mode,
             feedback=feedback,
@@ -485,15 +495,14 @@ class Controller(AsyncEventEmitter):
         # 检查是否需要发送 task_assignment（owner 变更）
         old_task = self._task_manager.read(task_id)
         task = await self._task_manager.update(
-            task_id, status=status, owner=owner, **kwargs,
+            task_id,
+            status=status,
+            owner=owner,
+            **kwargs,
         )
 
         # owner 变更时发送 task_assignment
-        if (
-            owner is not ...
-            and owner is not None
-            and (old_task is None or old_task.owner != owner)
-        ):
+        if owner is not ... and owner is not None and (old_task is None or old_task.owner != owner):
             await self._message_builder.send_task_assignment(owner, task)
 
         # 任务完成时发射事件

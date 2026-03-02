@@ -124,9 +124,14 @@ class TestTaskFileRoundtrip:
 
     def test_assigned_task_roundtrip(self) -> None:
         original = TaskFile(
-            id="2", subject="Implement", description="Details",
-            status="in_progress", active_form="Implementing",
-            owner="researcher", blocks=["3"], blocked_by=["1"],
+            id="2",
+            subject="Implement",
+            description="Details",
+            status="in_progress",
+            active_form="Implementing",
+            owner="researcher",
+            blocks=["3"],
+            blocked_by=["1"],
             metadata={"priority": "high"},
         )
         d = task_file_to_dict(original)
@@ -156,8 +161,12 @@ class TestInboxMessageRoundtrip:
     def test_full_message_roundtrip(self) -> None:
         """含 summary + color。"""
         original = InboxMessage(
-            from_="worker", text="Done", timestamp="t",
-            read=True, summary="Completed", color="green",
+            from_="worker",
+            text="Done",
+            timestamp="t",
+            read=True,
+            summary="Completed",
+            color="green",
         )
         d = inbox_message_to_dict(original)
         restored = inbox_message_from_dict(d)
@@ -171,7 +180,8 @@ class TestStructuredMessageRoundtrip:
 
     def test_task_assignment_roundtrip(self) -> None:
         original = TaskAssignmentMessage(
-            task_id="1", subject="Research API",
+            task_id="1",
+            subject="Research API",
             description="Investigate endpoints",
             assigned_by="team-lead",
             timestamp="2026-02-28T10:00:00.000Z",
@@ -343,16 +353,18 @@ class TestGoldenJsonParsing:
 
     def test_parse_native_permission_request(self) -> None:
         """模拟 Claude Code 原生产生的 permission_request JSON（snake_case）。"""
-        native_json = json.dumps({
-            "type": "permission_request",
-            "request_id": "perm-1772193780000-abc1234",
-            "agent_id": "delegate-agent",
-            "tool_name": "Bash",
-            "tool_use_id": "toolu_abc",
-            "description": "Run command",
-            "input": {"command": "ls"},
-            "permission_suggestions": [],
-        })
+        native_json = json.dumps(
+            {
+                "type": "permission_request",
+                "request_id": "perm-1772193780000-abc1234",
+                "agent_id": "delegate-agent",
+                "tool_name": "Bash",
+                "tool_use_id": "toolu_abc",
+                "description": "Run command",
+                "input": {"command": "ls"},
+                "permission_suggestions": [],
+            }
+        )
         result = parse_message_body(native_json)
         assert result is not None
         msg_type, msg = result
