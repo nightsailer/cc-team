@@ -600,3 +600,77 @@ class TestSessionManagement:
         new_sid = await manager.rotate_session("explicit-id")
         assert new_sid == "explicit-id"
         assert manager.get_lead_session_id() == "explicit-id"
+
+
+# ── register_member [R3] ──────────────────────────────────
+
+
+class TestRegisterMember:
+    """register_member() 测试。"""
+
+    @pytest.mark.asyncio
+    async def test_register_member_writes_config_and_inbox(
+        self, manager: TeamManager, isolated_home: Path
+    ) -> None:
+        """register_member 应写入 config.json 并创建空 inbox。"""
+        await manager.create()
+        member = await manager.register_member(name="bot1")
+
+        # 成员已注册
+        found = manager.get_member("bot1")
+        assert found is not None
+        assert found.agent_type == "general-purpose"
+        assert found.model == "claude-sonnet-4-6"
+        assert found.is_active is False
+        assert found.tmux_pane_id == ""
+        assert found.color is not None
+
+        # 返回值一致
+        assert member.name == "bot1"
+        assert member.color == found.color
+
+        # inbox 文件已创建
+        inbox_path = paths_mod.inbox_path("test-team", "bot1")
+        assert inbox_path.exists()
+        import json
+        assert json.loads(inbox_path.read_text()) == []
+
+    @pytest.mark.asyncio
+    async def test_register_member_duplicate_raises(self, manager: TeamManager) -> None:
+        """重复注册同名成员应抛出 ValueError。"""
+        await manager.create()
+        await manager.register_member(name="dup")
+        with pytest.raises(ValueError, match="already exists"):
+            await manager.register_member(name="dup")
+
+    @pytest.mark.asyncio
+    async def test_register_member_color_allocation(self, manager: TeamManager) -> None:
+        """连续注册应分配不同颜色。"""
+        await manager.create()
+        m1 = await manager.register_member(name="a1")
+        m2 = await manager.register_member(name="a2")
+        m3 = await manager.register_member(name="a3")
+        colors = [m1.color, m2.color, m3.color]
+        assert len(set(colors)) == 3  # 三个不同颜色
+
+    @pytest.mark.asyncio
+    async def test_register_member_custom_params(self, manager: TeamManager) -> None:
+        """支持自定义 agent_type、model、backend_type。"""
+        await manager.create()
+        member = await manager.register_member(
+            name="custom",
+            agent_type="Explore",
+            model="claude-opus-4-6",
+            cwd="/workspace",
+            backend_type="agent-sdk",
+        )
+        assert member.agent_type == "Explore"
+        assert member.model == "claude-opus-4-6"
+        assert member.cwd == "/workspace"
+        assert member.backend_type == "agent-sdk"
+
+    @pytest.mark.asyncio
+    async def test_register_member_no_config_raises(self, manager: TeamManager) -> None:
+        """无 config.json 时 register_member 应抛出 FileNotFoundError。"""
+        with pytest.raises(FileNotFoundError):
+            await manager.register_member(name="ghost")

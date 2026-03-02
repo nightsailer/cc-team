@@ -67,6 +67,9 @@ class EventRouter:
             case "permission_request":
                 await self._emitter.emit("permission:request", sender, parsed)
 
+            case "session_relay":
+                await self._emitter.emit("session:relayed", sender, parsed)
+
             case "task_assignment":
                 # Lead 不处理自己收到的 task_assignment
                 pass

@@ -150,6 +150,25 @@ class TestRouteRules:
         assert captured == ["worker-1"]
 
     @pytest.mark.asyncio
+    async def test_session_relay_routes_event(self) -> None:
+        """session_relay → "session:relayed" 事件。"""
+        emitter = AsyncEventEmitter()
+        captured: list[tuple] = []
+
+        async def handler(sender: str, parsed: object) -> None:
+            captured.append((sender, parsed))
+
+        emitter.on("session:relayed", handler)
+        router = EventRouter(emitter)
+
+        mock_parsed = MagicMock()
+        await router.route(_msg(), "session_relay", mock_parsed)
+
+        assert len(captured) == 1
+        assert captured[0][0] == "worker-1"
+        assert captured[0][1] is mock_parsed
+
+    @pytest.mark.asyncio
     async def test_sender_extracted_from_msg(self) -> None:
         """sender 从 msg.from_ 提取。"""
         emitter = AsyncEventEmitter()

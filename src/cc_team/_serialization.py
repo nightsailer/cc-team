@@ -32,6 +32,7 @@ from cc_team.types import (
     PermissionResponseMessage,
     PlanApprovalRequestMessage,
     PlanApprovalResponseMessage,
+    SessionRelayMessage,
     ShutdownApprovedMessage,
     ShutdownRequestMessage,
     TaskAssignmentMessage,
@@ -92,6 +93,9 @@ _PYTHON_TO_JSON: dict[str, str] = {
     "plan_file_path": "planFilePath",
     "plan_content": "planContent",
     "permission_mode": "permissionMode",
+    # SessionRelayMessage
+    "new_session_id": "newSessionId",
+    "previous_session_id": "previousSessionId",
     # 结构化消息 (permission snake_case 族)
     # 这些类型中 request_id 等字段保持 snake_case
     "tool_name": "tool_name",
@@ -236,6 +240,7 @@ _MESSAGE_TYPE_MAP: dict[str, type] = {
     "plan_approval_response": PlanApprovalResponseMessage,
     "permission_request": PermissionRequestMessage,
     "permission_response": PermissionResponseMessage,
+    "session_relay": SessionRelayMessage,
 }
 
 def parse_message_body(text: str) -> tuple[str, Any] | None:

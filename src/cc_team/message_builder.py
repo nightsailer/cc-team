@@ -12,12 +12,15 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from cc_team._serialization import build_message_body, now_iso, now_ms
 from cc_team.inbox import InboxIO
 from cc_team.types import (
     AgentColor,
     InboxMessage,
     PlanApprovalResponseMessage,
+    SessionRelayMessage,
     ShutdownRequestMessage,
     TaskAssignmentMessage,
     TaskFile,
@@ -132,6 +135,32 @@ class MessageBuilder:
         )
         inbox = InboxIO(self._team_name, recipient)
         await inbox.write(msg)
+
+    async def send_session_relay(
+        self,
+        recipients: list[str],
+        *,
+        new_session_id: str,
+        previous_session_id: str,
+    ) -> None:
+        """广播 session_relay 消息到多个 Agent。"""
+        timestamp = now_iso()
+        body = SessionRelayMessage(
+            from_=self._lead_name,
+            new_session_id=new_session_id,
+            previous_session_id=previous_session_id,
+            timestamp=timestamp,
+        )
+        msg = InboxMessage(
+            from_=self._lead_name,
+            text=build_message_body("session_relay", body),
+            timestamp=timestamp,
+            summary=f"Session relayed → {new_session_id[:8]}...",
+        )
+        # Each inbox is an independent file with its own lock; write in parallel
+        await asyncio.gather(*[
+            InboxIO(self._team_name, r).write(msg) for r in recipients
+        ])
 
     async def broadcast(
         self,

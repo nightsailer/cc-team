@@ -257,21 +257,34 @@ async def _cmd_team_session(args: argparse.Namespace) -> None:
 # ── agent 子命令 ──────────────────────────────────────────
 
 
+async def _cmd_agent_register(args: argparse.Namespace) -> None:
+    team = _require_team(args)
+    mgr, _config = await _require_config(team)
+
+    member = await mgr.register_member(
+        name=args.name,
+        agent_type=args.type,
+        model=args.model,
+        cwd=os.getcwd(),
+    )
+
+    if args.use_json:
+        _json_out({
+            "name": member.name,
+            "color": member.color,
+            "active": member.is_active,
+        })
+    else:
+        print(f"Agent '{member.name}' registered (color={member.color})")
+
+
 async def _cmd_agent_spawn(args: argparse.Namespace) -> None:
-    from cc_team._serialization import now_ms
     from cc_team.inbox import InboxIO
     from cc_team.process_manager import ProcessManager
-    from cc_team.team_manager import TeamManager
-    from cc_team.types import SpawnAgentOptions, TeamMember
+    from cc_team.types import TMUX_BACKEND, SpawnAgentOptions
 
     team = _require_team(args)
-    mgr = TeamManager(team)
-
-    # 验证团队存在
-    config = mgr.read()
-    if config is None:
-        _error(f"Team '{team}' not found. Create it first with: cct team create")
-        sys.exit(1)
+    mgr, config = await _require_config(team)
 
     agent_cwd = args.cwd if hasattr(args, "cwd") and args.cwd else os.getcwd()
 
@@ -283,23 +296,21 @@ async def _cmd_agent_spawn(args: argparse.Namespace) -> None:
         cwd=agent_cwd,
     )
 
-    # 1. 分配颜色 + 注册成员
-    color = mgr.next_color(config)
-    member = TeamMember(
-        agent_id=f"{options.name}@{team}",
+    # 1. 注册成员（分配颜色 + config.json + 空 inbox）
+    member = await mgr.register_member(
         name=options.name,
         agent_type=options.agent_type,
         model=options.model,
-        joined_at=now_ms(),
-        tmux_pane_id="",
         cwd=agent_cwd,
-        prompt=options.prompt,
-        color=color,
         plan_mode_required=options.plan_mode_required,
-        backend_type="tmux",
-        is_active=True,
+        backend_type=TMUX_BACKEND,
     )
-    await mgr.add_member(member)
+    color = member.color or ""
+
+    # 标记为 active + 保存 prompt
+    await mgr.update_member(
+        options.name, is_active=True, prompt=options.prompt,
+    )
 
     # 2. 写入初始 prompt
     inbox = InboxIO(team, options.name)
@@ -377,6 +388,42 @@ async def _cmd_agent_shutdown(args: argparse.Namespace) -> None:
         _json_out({"request_id": req_id, "target": args.name})
     else:
         print(f"Shutdown request sent to '{args.name}' (request_id={req_id})")
+
+
+async def _cmd_agent_sync(args: argparse.Namespace) -> None:
+    from cc_team.tmux import TmuxManager
+    from cc_team.types import TEAM_LEAD_AGENT_TYPE
+
+    team = _require_team(args)
+    mgr, config = await _require_config(team)
+
+    tmux = TmuxManager()
+    synced: list[str] = []
+    inactive: list[str] = []
+
+    for member in config.members:
+        if member.agent_type == TEAM_LEAD_AGENT_TYPE:
+            continue
+        if not member.is_active:
+            continue
+        if not member.tmux_pane_id:
+            continue
+
+        alive = await tmux.is_pane_alive(member.tmux_pane_id)
+        if alive:
+            synced.append(member.name)
+            if not args.use_json and not args.quiet:
+                print(f"{member.name}: pane {member.tmux_pane_id} alive → synced")
+        else:
+            await mgr.update_member(member.name, is_active=False)
+            inactive.append(member.name)
+            if not args.use_json and not args.quiet:
+                print(f"{member.name}: pane {member.tmux_pane_id} dead → marked inactive")
+
+    if args.use_json:
+        _json_out({"synced": synced, "inactive": inactive})
+    elif not args.quiet:
+        print(f"Synced {len(synced)} agent(s), {len(inactive)} marked inactive")
 
 
 async def _cmd_agent_kill(args: argparse.Namespace) -> None:
@@ -652,6 +699,15 @@ def _build_parser() -> argparse.ArgumentParser:
     agent_p = sub.add_parser("agent", help="Agent management")
     agent_sub = agent_p.add_subparsers(dest="agent_action")
 
+    areg = agent_sub.add_parser("register", help="Register an agent without starting a process")
+    areg.add_argument("--name", required=True, help="Agent name")
+    areg.add_argument(
+        "--type", default="general-purpose",
+        help="Agent type (default: general-purpose)",
+    )
+    areg.add_argument("--model", default="claude-sonnet-4-6", help="Model ID")
+    areg.set_defaults(func=_cmd_agent_register)
+
     asp = agent_sub.add_parser("spawn", help="Spawn a new agent")
     asp.add_argument("--name", required=True, help="Agent name")
     asp.add_argument("--prompt", required=True, help="Initial prompt for the agent")
@@ -673,6 +729,9 @@ def _build_parser() -> argparse.ArgumentParser:
     asd.add_argument("--name", required=True, help="Agent name")
     asd.add_argument("--reason", default="CLI shutdown request", help="Shutdown reason")
     asd.set_defaults(func=_cmd_agent_shutdown)
+
+    asyn = agent_sub.add_parser("sync", help="Sync agents: verify pane liveness, mark dead as inactive")
+    asyn.set_defaults(func=_cmd_agent_sync)
 
     ak = agent_sub.add_parser("kill", help="Force kill an agent process")
     ak.add_argument("--name", required=True, help="Agent name")

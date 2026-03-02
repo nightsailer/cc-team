@@ -28,6 +28,7 @@ from cc_team.types import (
     PermissionRequestMessage,
     PermissionResponseMessage,
     PlanApprovalResponseMessage,
+    SessionRelayMessage,
     ShutdownRequestMessage,
     TaskFile,
     TeamConfig,
@@ -612,3 +613,28 @@ class TestBuildMessageBodyExtended:
         parsed = json.loads(text)
         assert parsed["approved"] is False
         assert parsed["feedback"] == "Need more detail"
+
+    def test_session_relay_roundtrip(self) -> None:
+        """session_relay 序列化/反序列化 roundtrip。"""
+        msg = SessionRelayMessage(
+            from_="team-lead",
+            new_session_id="new-uuid-123",
+            previous_session_id="old-uuid-456",
+            timestamp="2026-03-02T10:00:00.000Z",
+        )
+        text = build_message_body("session_relay", msg)
+        parsed_json = json.loads(text)
+        # 检查 camelCase 序列化
+        assert parsed_json["type"] == "session_relay"
+        assert parsed_json["newSessionId"] == "new-uuid-123"
+        assert parsed_json["previousSessionId"] == "old-uuid-456"
+        assert parsed_json["from"] == "team-lead"
+        # 反序列化
+        result = parse_message_body(text)
+        assert result is not None
+        msg_type, restored = result
+        assert msg_type == "session_relay"
+        assert isinstance(restored, SessionRelayMessage)
+        assert restored.new_session_id == "new-uuid-123"
+        assert restored.previous_session_id == "old-uuid-456"
+        assert restored.from_ == "team-lead"

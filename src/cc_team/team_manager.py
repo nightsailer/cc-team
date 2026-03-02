@@ -24,7 +24,14 @@ from cc_team._serialization import (
 )
 from cc_team.exceptions import AgentNotFoundError
 from cc_team.filelock import FileLock
-from cc_team.types import AGENT_COLORS, TEAM_LEAD_AGENT_TYPE, AgentColor, TeamConfig, TeamMember
+from cc_team.types import (
+    AGENT_COLORS,
+    TEAM_LEAD_AGENT_TYPE,
+    AgentColor,
+    BackendType,
+    TeamConfig,
+    TeamMember,
+)
 
 
 class TeamManager:
@@ -157,6 +164,61 @@ class TeamManager:
                 raise ValueError(f"Member already exists: {member.name!r}")
             config.members.append(member)
             atomic_write_json(self._config_path, team_config_to_dict(config))
+
+    async def register_member(
+        self,
+        *,
+        name: str,
+        agent_type: str = "general-purpose",
+        model: str = "claude-sonnet-4-6",
+        cwd: str = "",
+        plan_mode_required: bool = False,
+        backend_type: BackendType | None = None,
+    ) -> TeamMember:
+        """Register member to config.json + create empty inbox, without starting a process.
+
+        Color allocation and member insertion are performed under a single lock
+        to prevent TOCTOU race on color assignment.
+
+        Returns:
+            Registered TeamMember (is_active=False)
+
+        Raises:
+            FileNotFoundError: team config does not exist
+            ValueError: member name already exists
+        """
+        from cc_team.inbox import InboxIO
+
+        # Allocate color + append member under one lock to avoid color collision
+        async with self._lock.acquire():
+            data = read_json(self._config_path)
+            if data is None:
+                raise FileNotFoundError(f"Team config not found: {self._config_path}")
+            config = team_config_from_dict(data)
+            if any(m.name == name for m in config.members):
+                raise ValueError(f"Member already exists: {name!r}")
+            color = AGENT_COLORS[len(config.members) % len(AGENT_COLORS)]
+            member = TeamMember(
+                agent_id=f"{name}@{self._team_name}",
+                name=name,
+                agent_type=agent_type,
+                model=model,
+                joined_at=now_ms(),
+                tmux_pane_id="",
+                cwd=cwd,
+                color=color,
+                plan_mode_required=plan_mode_required,
+                backend_type=backend_type,
+                is_active=False,
+            )
+            config.members.append(member)
+            atomic_write_json(self._config_path, team_config_to_dict(config))
+
+        # Create empty inbox (does not overwrite existing content)
+        inbox = InboxIO(self._team_name, name)
+        await inbox.ensure_exists()
+
+        return member
 
     def next_color(self, config: TeamConfig | None = None) -> AgentColor:
         """分配下一个颜色（8 色循环）。

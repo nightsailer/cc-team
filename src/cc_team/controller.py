@@ -17,7 +17,6 @@ import os
 import uuid
 from typing import Any
 
-from cc_team._serialization import now_ms
 from cc_team.agent_handle import AgentHandle
 from cc_team.event_router import EventRouter
 from cc_team.events import AsyncEventEmitter
@@ -30,12 +29,12 @@ from cc_team.task_manager import TaskManager
 from cc_team.team_manager import TeamManager
 from cc_team.types import (
     TEAM_LEAD_AGENT_TYPE,
+    TMUX_BACKEND,
     AgentBackend,
     ControllerOptions,
     SpawnAgentOptions,
     TaskFile,
     TaskStatus,
-    TeamMember,
 )
 
 
@@ -160,18 +159,8 @@ class Controller(AsyncEventEmitter):
 
         await self._start_poller()
 
-        # 从 config 恢复已有 agent handles（非 TL 的 active 成员）
-        for member in config.members:
-            if member.agent_type == TEAM_LEAD_AGENT_TYPE:
-                continue
-            if not member.is_active:
-                continue
-            handle = AgentHandle(
-                member.name, self,
-                pane_id=member.tmux_pane_id,
-                color=member.color or "",
-            )
-            self._handles[member.name] = handle
+        # 从 config 恢复已有 agent handles（验证 pane 存活状态）
+        await self.sync_agents()
 
         self._initialized = True
         self._created_team = False
@@ -201,7 +190,7 @@ class Controller(AsyncEventEmitter):
         self._initialized = False
 
     async def relay(self) -> str:
-        """上下文接力：轮转 session ID + 重启 poller。
+        """上下文接力：轮转 session ID + 广播通知 + 重启 poller。
 
         SDK 用户调用此方法进行 session 轮转。TL 进程的停止/重启
         由调用方处理（CLI 或上层应用），因为 Controller 不一定管理
@@ -215,11 +204,22 @@ class Controller(AsyncEventEmitter):
         """
         self._check_initialized()
 
+        previous_session_id = self._session_id
+
         # 停止当前 poller
         await self._stop_poller()
 
         # 轮转 session
         self._session_id = await self._team_manager.rotate_session()
+
+        # 广播 session_relay 到所有 active agents（poller 重启前）
+        active_agents = list(self._handles.keys())
+        if active_agents:
+            await self._message_builder.send_session_relay(
+                active_agents,
+                new_session_id=self._session_id,
+                previous_session_id=previous_session_id,
+            )
 
         # 重启 poller
         await self._start_poller()
@@ -245,6 +245,53 @@ class Controller(AsyncEventEmitter):
         if not self._initialized:
             raise NotInitializedError("Controller not initialized, call init() first")
 
+    # ── Agent 同步 ──────────────────────────────────────────
+
+    async def sync_agents(self) -> list[AgentHandle]:
+        """发现并恢复/清理 agent 连接。
+
+        对 config.json 中每个非 TL active 成员：
+        1. 有 pane_id → 检查 tmux pane 是否存活
+           - 存活 → 创建 handle + 注册到 ProcessManager.track()
+           - 死亡 → update_member(is_active=False)
+        2. 无 pane_id → 跳过（register-only 成员）
+
+        Returns:
+            恢复的 AgentHandle 列表
+        """
+        config = self._team_manager.read()
+        if config is None:
+            return []
+
+        synced: list[AgentHandle] = []
+        for member in config.members:
+            if member.agent_type == TEAM_LEAD_AGENT_TYPE:
+                continue
+            if not member.is_active:
+                continue
+            if not member.tmux_pane_id:
+                continue
+
+            # Always track first so is_running can resolve the pane
+            self._process_manager.track(member.name, member.tmux_pane_id)
+            alive = await self._process_manager.is_running(member.name)
+            if not alive:
+                self._process_manager.untrack(member.name)
+                await self._team_manager.update_member(
+                    member.name, is_active=False,
+                )
+                continue
+
+            handle = AgentHandle(
+                member.name, self,
+                pane_id=member.tmux_pane_id,
+                color=member.color,
+            )
+            self._handles[member.name] = handle
+            synced.append(handle)
+
+        return synced
+
     # ── Agent 管理 ──────────────────────────────────────────
 
     async def spawn(self, options: SpawnAgentOptions) -> AgentHandle:
@@ -264,49 +311,46 @@ class Controller(AsyncEventEmitter):
         """
         self._check_initialized()
 
-        # 1. 分配颜色 + 注册成员
-        color = self._team_manager.next_color()
-        member = TeamMember(
-            agent_id=f"{options.name}@{self._options.team_name}",
+        # 1. 注册成员（分配颜色 + 写入 config.json + 创建空 inbox）
+        member = await self._team_manager.register_member(
             name=options.name,
             agent_type=options.agent_type,
             model=options.model,
-            joined_at=now_ms(),
-            tmux_pane_id="",  # 稍后填充
             cwd=self._options.cwd or os.getcwd(),
-            prompt=options.prompt,
-            color=color,
             plan_mode_required=options.plan_mode_required,
-            backend_type="tmux",
-            is_active=True,
+            backend_type=TMUX_BACKEND,
         )
-        await self._team_manager.add_member(member)
 
-        # 2. 写入初始 prompt 到 inbox（进程启动前必须就绪）
+        # register_member sets is_active=False; spawn marks active + saves prompt
+        await self._team_manager.update_member(
+            options.name, is_active=True, prompt=options.prompt,
+        )
+
+        # 2. Write initial prompt to inbox (must be ready before process start)
         inbox = InboxIO(self._options.team_name, options.name)
         await inbox.write_initial_prompt(TEAM_LEAD_AGENT_TYPE, options.prompt)
 
-        # 3. 启动进程
+        # 3. Start process
         try:
             pane_id = await self._process_manager.spawn(
                 options,
                 team_name=self._options.team_name,
-                color=color,
+                color=member.color or "",
                 parent_session_id=self._session_id,
             )
         except Exception:
-            # 回滚: 移除已注册的成员
+            # Rollback: remove registered member
             with contextlib.suppress(Exception):
                 await self._team_manager.remove_member(options.name)
             raise
 
-        # 更新成员的 pane_id
+        # Update member's pane_id
         await self._team_manager.update_member(options.name, tmux_pane_id=pane_id)
 
-        # 4. 创建 AgentHandle
+        # 4. Create AgentHandle
         handle = AgentHandle(
             options.name, self,
-            pane_id=pane_id, color=color,
+            pane_id=pane_id, color=member.color,
         )
         self._handles[options.name] = handle
 

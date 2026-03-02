@@ -93,6 +93,12 @@ class ProcessManager:
             raise AgentNotFoundError(agent_name)
         return pane_id
 
+    # ── 外部注册 ────────────────────────────────────────────
+
+    def track(self, agent_name: str, pane_id: str) -> None:
+        """注册已有 agent 到追踪列表（attach/sync 场景）。"""
+        self._panes[agent_name] = pane_id
+
     # ── 终止 ────────────────────────────────────────────────
 
     async def kill(self, agent_name: str) -> None:

@@ -153,6 +153,113 @@ class TestAgentSpawn:
         assert team.get_member("doomed") is None
 
 
+# ── agent register ──────────────────────────────────────────
+
+
+class TestAgentRegister:
+    """agent register CLI 测试。"""
+
+    @pytest.mark.asyncio
+    async def test_register_team_not_found_exits(self, isolated_home: Path) -> None:
+        """团队不存在时 exit(1)。"""
+        parser = _build_parser()
+        args = parser.parse_args([
+            "--team-name", "ghost-team",
+            "agent", "register", "--name", "bot1",
+        ])
+        with pytest.raises(SystemExit):
+            await args.func(args)
+
+    @pytest.mark.asyncio
+    async def test_register_normal_flow(
+        self, team: TeamManager, isolated_home: Path,
+    ) -> None:
+        """正常 register：config 写入 + inbox 创建 + 无 pane。"""
+        parser = _build_parser()
+        args = parser.parse_args([
+            "--team-name", "test-team",
+            "agent", "register", "--name", "bot1",
+        ])
+        await args.func(args)
+
+        # 成员应已注册
+        member = team.get_member("bot1")
+        assert member is not None
+        assert member.is_active is False
+        assert member.tmux_pane_id == ""
+        assert member.color is not None
+
+        # inbox 应存在且为空数组
+        import cc_team.paths as paths_mod
+        inbox_path = paths_mod.inbox_path("test-team", "bot1")
+        assert inbox_path.exists()
+        msgs = json.loads(inbox_path.read_text())
+        assert msgs == []
+
+    @pytest.mark.asyncio
+    async def test_register_json_output(
+        self, team: TeamManager, isolated_home: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """--json 输出 JSON 格式。"""
+        parser = _build_parser()
+        args = parser.parse_args([
+            "--team-name", "test-team", "--json",
+            "agent", "register", "--name", "bot2",
+        ])
+        await args.func(args)
+
+        captured = capsys.readouterr()
+        data = json.loads(captured.out)
+        assert data["name"] == "bot2"
+        assert data["active"] is False
+        assert "color" in data
+
+    @pytest.mark.asyncio
+    async def test_register_then_message_send(
+        self, team: TeamManager, isolated_home: Path,
+    ) -> None:
+        """register 后可通过 message send 发送消息。"""
+        from cc_team.message_builder import MessageBuilder
+
+        # 先 register
+        parser = _build_parser()
+        args = parser.parse_args([
+            "--team-name", "test-team",
+            "agent", "register", "--name", "bot3",
+        ])
+        await args.func(args)
+
+        # 然后发送消息
+        builder = MessageBuilder("test-team")
+        await builder.send_plain("bot3", "hello from lead")
+
+        # 验证消息写入
+        import cc_team.paths as paths_mod
+        inbox_path = paths_mod.inbox_path("test-team", "bot3")
+        msgs = json.loads(inbox_path.read_text())
+        texts = [m["text"] for m in msgs]
+        assert "hello from lead" in texts
+
+    @pytest.mark.asyncio
+    async def test_register_custom_type_and_model(
+        self, team: TeamManager, isolated_home: Path,
+    ) -> None:
+        """支持 --type 和 --model 自定义参数。"""
+        parser = _build_parser()
+        args = parser.parse_args([
+            "--team-name", "test-team",
+            "agent", "register", "--name", "explorer",
+            "--type", "Explore", "--model", "claude-haiku-4-5-20251001",
+        ])
+        await args.func(args)
+
+        member = team.get_member("explorer")
+        assert member is not None
+        assert member.agent_type == "Explore"
+        assert member.model == "claude-haiku-4-5-20251001"
+
+
 # ── agent kill ──────────────────────────────────────────────
 
 
@@ -562,3 +669,103 @@ class TestTeamSession:
         ])
         with pytest.raises(SystemExit):
             await args.func(args)
+
+
+# ── agent sync ────────────────────────────────────────────
+
+
+class TestAgentSync:
+    """agent sync CLI 测试。"""
+
+    @pytest.mark.asyncio
+    async def test_sync_team_not_found_exits(self, isolated_home: Path) -> None:
+        """团队不存在时 exit(1)。"""
+        parser = _build_parser()
+        args = parser.parse_args([
+            "--team-name", "ghost",
+            "agent", "sync",
+        ])
+        with pytest.raises(SystemExit):
+            await args.func(args)
+
+    @pytest.mark.asyncio
+    async def test_sync_normal_flow(
+        self, team: TeamManager, isolated_home: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """正常 sync：存活 → synced，死亡 → inactive。"""
+        # 添加一个 active agent
+        member = TeamMember(
+            agent_id="w@test-team", name="worker-1",
+            agent_type="general-purpose", model="claude-sonnet-4-6",
+            joined_at=FIXED_MS, tmux_pane_id="%68", cwd="/tmp",
+            color="blue", is_active=True, backend_type="tmux",
+        )
+        await team.add_member(member)
+        # 添加一个 dead agent
+        dead_member = TeamMember(
+            agent_id="d@test-team", name="dead-agent",
+            agent_type="general-purpose", model="claude-sonnet-4-6",
+            joined_at=FIXED_MS, tmux_pane_id="%55", cwd="/tmp",
+            color="green", is_active=True, backend_type="tmux",
+        )
+        await team.add_member(dead_member)
+
+        parser = _build_parser()
+        args = parser.parse_args([
+            "--team-name", "test-team",
+            "agent", "sync",
+        ])
+
+        with patch("cc_team.tmux.TmuxManager") as MockTmux:
+            mock_tmux = MockTmux.return_value
+
+            async def _is_alive(pane_id: str) -> bool:
+                return pane_id == "%68"
+
+            mock_tmux.is_pane_alive = AsyncMock(side_effect=_is_alive)
+
+            await args.func(args)
+
+        captured = capsys.readouterr()
+        assert "worker-1" in captured.out
+        assert "synced" in captured.out
+        assert "dead-agent" in captured.out
+        assert "inactive" in captured.out
+
+        # dead-agent 应标记为 inactive
+        dead = team.get_member("dead-agent")
+        assert dead is not None
+        assert dead.is_active is False
+
+    @pytest.mark.asyncio
+    async def test_sync_json_output(
+        self, team: TeamManager, isolated_home: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """--json 输出 JSON 格式。"""
+        member = TeamMember(
+            agent_id="w@test-team", name="worker-1",
+            agent_type="general-purpose", model="claude-sonnet-4-6",
+            joined_at=FIXED_MS, tmux_pane_id="%68", cwd="/tmp",
+            color="blue", is_active=True, backend_type="tmux",
+        )
+        await team.add_member(member)
+
+        parser = _build_parser()
+        args = parser.parse_args([
+            "--team-name", "test-team", "--json",
+            "agent", "sync",
+        ])
+
+        with patch("cc_team.tmux.TmuxManager") as MockTmux:
+            mock_tmux = MockTmux.return_value
+            mock_tmux.is_pane_alive = AsyncMock(return_value=True)
+
+            await args.func(args)
+
+        captured = capsys.readouterr()
+        data = json.loads(captured.out)
+        assert "synced" in data
+        assert "inactive" in data
+        assert "worker-1" in data["synced"]

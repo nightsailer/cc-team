@@ -762,3 +762,215 @@ class TestRelay:
         """未初始化时 relay 抛出 NotInitializedError。"""
         with pytest.raises(NotInitializedError):
             await ctrl.relay()
+
+
+# ── Spawn 使用 register_member [R3] ──────────────────────
+
+
+class TestSpawnUsesRegisterMember:
+    """验证重构后 spawn 通过 register_member 注册成员。"""
+
+    @pytest.mark.asyncio
+    async def test_spawn_uses_register_member(self, ctrl: Controller) -> None:
+        """spawn 应通过 register_member 注册，然后更新为 active。"""
+        await ctrl.init()
+        handle = await ctrl.spawn(SpawnAgentOptions(name="dev", prompt="Work"))
+
+        member = ctrl.team_manager.get_member("dev")
+        assert member is not None
+        # spawn 后应为 active
+        assert member.is_active is True
+        # 应有颜色
+        assert member.color is not None
+        # pane_id 应已更新
+        assert member.tmux_pane_id == "%20"
+        # prompt 应已保存
+        assert member.prompt == "Work"
+        # handle 正常
+        assert handle.name == "dev"
+        await ctrl.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_spawn_rollback_still_works(self, ctrl: Controller) -> None:
+        """重构后 spawn 失败时仍能正确回滚。"""
+        await ctrl.init()
+
+        ctrl._process_manager.spawn = AsyncMock(  # type: ignore[method-assign]
+            side_effect=Exception("backend dead")
+        )
+
+        with pytest.raises(Exception, match="backend dead"):
+            await ctrl.spawn(SpawnAgentOptions(name="doomed", prompt="hi"))
+
+        # 成员应被回滚
+        assert ctrl.team_manager.get_member("doomed") is None
+        await ctrl.shutdown()
+
+
+# ── Sync Agents [R5] ──────────────────────────────────────
+
+
+class TestSyncAgents:
+    """sync_agents() 测试。"""
+
+    @pytest.mark.asyncio
+    async def test_sync_agents_recovers_alive_panes(
+        self, isolated_home: Path, mock_pm: ProcessManager,
+    ) -> None:
+        """存活 pane 应恢复为 handle。"""
+        from cc_team.team_manager import TeamManager
+        from cc_team.types import TeamMember
+
+        mgr = TeamManager("test-team")
+        await mgr.create(lead_session_id="s1")
+        await mgr.add_member(TeamMember(
+            agent_id="w@test-team", name="worker",
+            agent_type="general-purpose", model="claude-sonnet-4-6",
+            joined_at=FIXED_MS, tmux_pane_id="%68", cwd="/tmp",
+            color="blue", is_active=True, backend_type="tmux",
+        ))
+
+        # mock_pm 的 is_running 需要 pane 被 track
+        # mock_pm 使用 mock tmux，is_pane_alive 默认返回 True
+        c = Controller(
+            ControllerOptions(team_name="test-team"),
+            process_manager=mock_pm,
+        )
+        c._initialized = True
+
+        synced = await c.sync_agents()
+
+        assert len(synced) == 1
+        assert synced[0].name == "worker"
+        assert "worker" in c.list_agents()
+        # ProcessManager 应有 track 记录
+        assert "worker" in mock_pm.tracked_agents()
+        await c.shutdown()
+        await mgr.destroy()
+
+    @pytest.mark.asyncio
+    async def test_sync_agents_marks_dead_inactive(
+        self, isolated_home: Path,
+    ) -> None:
+        """死亡 pane 应标记为 inactive。"""
+        from cc_team.team_manager import TeamManager
+        from cc_team.types import TeamMember
+
+        mgr = TeamManager("test-team")
+        await mgr.create(lead_session_id="s1")
+        await mgr.add_member(TeamMember(
+            agent_id="d@test-team", name="dead-agent",
+            agent_type="general-purpose", model="claude-sonnet-4-6",
+            joined_at=FIXED_MS, tmux_pane_id="%55", cwd="/tmp",
+            color="green", is_active=True, backend_type="tmux",
+        ))
+
+        # 创建 PM，pane 不存活
+        dead_tmux = _mock_tmux()
+        dead_tmux.is_pane_alive = AsyncMock(return_value=False)
+        dead_pm = ProcessManager(tmux=dead_tmux)
+
+        c = Controller(
+            ControllerOptions(team_name="test-team"),
+            process_manager=dead_pm,
+        )
+        c._initialized = True
+
+        synced = await c.sync_agents()
+
+        assert len(synced) == 0
+        assert "dead-agent" not in c.list_agents()
+        # config 中应标记为 inactive
+        member = mgr.get_member("dead-agent")
+        assert member is not None
+        assert member.is_active is False
+        await c.shutdown()
+        await mgr.destroy()
+
+    @pytest.mark.asyncio
+    async def test_attach_uses_sync_agents(
+        self, isolated_home: Path,
+    ) -> None:
+        """attach 使用 sync_agents，ghost pane 不在 handles 中。"""
+        from cc_team.team_manager import TeamManager
+        from cc_team.types import TeamMember
+
+        mgr = TeamManager("test-team")
+        await mgr.create(lead_session_id="s1")
+        # 一个存活 + 一个死亡
+        await mgr.add_member(TeamMember(
+            agent_id="alive@test-team", name="alive-agent",
+            agent_type="general-purpose", model="claude-sonnet-4-6",
+            joined_at=FIXED_MS, tmux_pane_id="%10", cwd="/tmp",
+            color="blue", is_active=True, backend_type="tmux",
+        ))
+        await mgr.add_member(TeamMember(
+            agent_id="ghost@test-team", name="ghost-agent",
+            agent_type="general-purpose", model="claude-sonnet-4-6",
+            joined_at=FIXED_MS, tmux_pane_id="%99", cwd="/tmp",
+            color="green", is_active=True, backend_type="tmux",
+        ))
+
+        # tmux mock: %10 存活, %99 死亡
+        mixed_tmux = _mock_tmux()
+
+        async def _is_alive(pane_id: str) -> bool:
+            return pane_id == "%10"
+
+        mixed_tmux.is_pane_alive = AsyncMock(side_effect=_is_alive)
+        mixed_pm = ProcessManager(tmux=mixed_tmux)
+
+        c = Controller(
+            ControllerOptions(team_name="test-team"),
+            process_manager=mixed_pm,
+        )
+        await c.attach()
+
+        assert "alive-agent" in c.list_agents()
+        assert "ghost-agent" not in c.list_agents()
+        # ghost 应被标记为 inactive
+        ghost = mgr.get_member("ghost-agent")
+        assert ghost is not None
+        assert ghost.is_active is False
+        await c.shutdown()
+        await mgr.destroy()
+
+
+# ── Relay Broadcasts Session Relay [R7] ──────────────────
+
+
+class TestRelayBroadcast:
+    """relay() 广播 session_relay 测试。"""
+
+    @pytest.mark.asyncio
+    async def test_relay_broadcasts_session_relay(self, ctrl: Controller) -> None:
+        """relay 应广播 session_relay 到所有 active agents。"""
+        await ctrl.init()
+        await ctrl.spawn(SpawnAgentOptions(name="w1", prompt="hi"))
+        await ctrl.spawn(SpawnAgentOptions(name="w2", prompt="hi"))
+        old_sid = ctrl.session_id
+
+        new_sid = await ctrl.relay()
+
+        # 检查两个 agent 的 inbox 中有 session_relay 消息
+        for name in ["w1", "w2"]:
+            inbox_path = paths_mod.inbox_path("test-team", name)
+            msgs = json.loads(inbox_path.read_text())
+            relay_msgs = [
+                m for m in msgs
+                if '"session_relay"' in m.get("text", "")
+            ]
+            assert len(relay_msgs) >= 1
+            body = json.loads(relay_msgs[0]["text"])
+            assert body["type"] == "session_relay"
+            assert body["newSessionId"] == new_sid
+            assert body["previousSessionId"] == old_sid
+        await ctrl.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_relay_no_agents_no_broadcast(self, ctrl: Controller) -> None:
+        """无 active agents 时 relay 不广播。"""
+        await ctrl.init()
+        # 不 spawn 任何 agent，relay 不应报错
+        await ctrl.relay()
+        await ctrl.shutdown()

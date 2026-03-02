@@ -42,6 +42,17 @@ class InboxIO:
     def inbox_path(self) -> Path:
         return self._inbox_path
 
+    # ── 初始化 ──────────────────────────────────────────────
+
+    async def ensure_exists(self) -> None:
+        """确保 inbox 文件存在（空数组），不覆盖已有内容。
+
+        用于 register_member() 场景：仅创建空 inbox，不写入任何消息。
+        """
+        async with self._lock.acquire():
+            if not self._inbox_path.exists():
+                self._write_raw([])
+
     # ── 写入 ────────────────────────────────────────────────
 
     async def write(self, message: InboxMessage) -> None:

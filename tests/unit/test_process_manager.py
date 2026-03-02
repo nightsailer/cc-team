@@ -501,6 +501,35 @@ class TestSendInput:
             await pm.send_input("nobody", "hello")
 
 
+# ── Track ───────────────────────────────────────────────────
+
+
+class TestTrack:
+    """track() 外部注册测试。"""
+
+    def test_track_registers_pane(self) -> None:
+        """track 将 agent 注册到追踪列表。"""
+        pm = ProcessManager(tmux=_make_mock_tmux())
+        pm.track("restored-agent", "%55")
+        assert "restored-agent" in pm.tracked_agents()
+        assert pm.get_pane_id("restored-agent") == "%55"
+
+    @pytest.mark.asyncio
+    async def test_track_then_is_running(self) -> None:
+        """track 后 is_running 检查 pane 存活状态。"""
+        tmux = _make_mock_tmux()
+        pm = ProcessManager(tmux=tmux)
+        pm.track("agent-x", "%30")
+        assert await pm.is_running("agent-x") is True
+
+    def test_track_overwrites_existing(self) -> None:
+        """track 覆盖已有 pane 映射。"""
+        pm = ProcessManager(tmux=_make_mock_tmux())
+        pm.track("agent-x", "%10")
+        pm.track("agent-x", "%20")
+        assert pm.get_pane_id("agent-x") == "%20"
+
+
 # ── Protocol Compatibility ──────────────────────────────────
 
 

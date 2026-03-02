@@ -309,6 +309,40 @@ class TestInboxMtime:
 # ── 属性 ─────────────────────────────────────────────────────
 
 
+# ── ensure_exists ───────────────────────────────────────────
+
+
+class TestInboxEnsureExists:
+    """ensure_exists() 测试。"""
+
+    @pytest.mark.asyncio
+    async def test_ensure_exists_creates_empty_array(self, inbox: InboxIO) -> None:
+        """不存在时创建包含空 JSON 数组的文件。"""
+        assert not inbox.inbox_path.exists()
+        await inbox.ensure_exists()
+        assert inbox.inbox_path.exists()
+        assert inbox.read_all() == []
+
+    @pytest.mark.asyncio
+    async def test_ensure_exists_no_overwrite(self, inbox: InboxIO) -> None:
+        """已有内容时不覆盖。"""
+        await inbox.write(_make_msg(text="existing"))
+        await inbox.ensure_exists()
+        messages = inbox.read_all()
+        assert len(messages) == 1
+        assert messages[0].text == "existing"
+
+    @pytest.mark.asyncio
+    async def test_ensure_exists_idempotent(self, inbox: InboxIO) -> None:
+        """多次调用幂等。"""
+        await inbox.ensure_exists()
+        await inbox.ensure_exists()
+        assert inbox.read_all() == []
+
+
+# ── 属性 ─────────────────────────────────────────────────────
+
+
 class TestInboxProperties:
     """属性测试。"""
 

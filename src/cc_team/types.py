@@ -27,6 +27,7 @@ AgentType = Literal["general-purpose", "Explore", "Plan", "Bash", "team-lead"]
 TEAM_LEAD_AGENT_TYPE: AgentType = "team-lead"
 
 BackendType = Literal["tmux", "in-process", "agent-sdk"]
+TMUX_BACKEND: BackendType = "tmux"
 
 AgentColor = Literal["blue", "green", "yellow", "purple", "orange", "pink", "cyan", "red"]
 
@@ -44,6 +45,7 @@ MessageType = Literal[
     "plan_approval_response",
     "permission_request",
     "permission_response",
+    "session_relay",
 ]
 
 
@@ -212,6 +214,20 @@ class PermissionResponseMessage:
     error: str | None = None  # 拒绝原因
 
 
+@dataclass
+class SessionRelayMessage:
+    """Session 轮转通知（Lead → Agents）。
+
+    relay() 轮转 session 后广播给所有 active agents，
+    通知新 session ID，避免 session 分裂。
+    """
+
+    from_: str  # 发送方 (JSON: from)
+    new_session_id: str  # 新 session ID (JSON: newSessionId)
+    previous_session_id: str  # 旧 session ID (JSON: previousSessionId)
+    timestamp: str  # ISO 8601
+
+
 # ── 任务 ────────────────────────────────────────────────────
 
 
@@ -294,6 +310,10 @@ class AgentBackend(Protocol):
 
     async def is_running(self, agent_name: str) -> bool:
         """Check whether an agent process is alive."""
+        ...
+
+    def track(self, agent_name: str, pane_id: str) -> None:
+        """Register an existing agent into tracking (attach/sync scenarios)."""
         ...
 
     def tracked_agents(self) -> list[str]:

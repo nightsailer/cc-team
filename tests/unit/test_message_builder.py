@@ -188,3 +188,40 @@ class TestBroadcast:
     async def test_empty_recipients_noop(self, builder: MessageBuilder) -> None:
         """空接收列表不操作。"""
         await builder.broadcast("Alert!", [])  # 不应抛出
+
+
+# ── send_session_relay ────────────────────────────────────
+
+
+class TestSendSessionRelay:
+    """send_session_relay() 测试。"""
+
+    @pytest.mark.asyncio
+    async def test_send_session_relay(self, builder: MessageBuilder) -> None:
+        """广播 session_relay 消息到多个接收者。"""
+        await builder.send_session_relay(
+            ["agent-1", "agent-2"],
+            new_session_id="new-uuid",
+            previous_session_id="old-uuid",
+        )
+        for name in ["agent-1", "agent-2"]:
+            msgs = _read_inbox("test-team", name)
+            assert len(msgs) == 1
+            body = json.loads(msgs[0]["text"])
+            assert body["type"] == "session_relay"
+            assert body["newSessionId"] == "new-uuid"
+            assert body["previousSessionId"] == "old-uuid"
+            assert body["from"] == "boss"
+            # 应有 summary
+            assert msgs[0].get("summary") is not None
+
+    @pytest.mark.asyncio
+    async def test_send_session_relay_empty_recipients(
+        self, builder: MessageBuilder,
+    ) -> None:
+        """空接收列表不操作。"""
+        await builder.send_session_relay(
+            [],
+            new_session_id="new",
+            previous_session_id="old",
+        )  # 不应抛出
