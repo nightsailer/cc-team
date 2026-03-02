@@ -17,11 +17,11 @@ import os
 import uuid
 from typing import Any
 
+from cc_team._spawn import spawn_agent_workflow
 from cc_team.agent_handle import AgentHandle
 from cc_team.event_router import EventRouter
 from cc_team.events import AsyncEventEmitter
 from cc_team.exceptions import AgentNotFoundError, NotInitializedError
-from cc_team.inbox import InboxIO
 from cc_team.inbox_poller import InboxPoller
 from cc_team.message_builder import MessageBuilder
 from cc_team.process_manager import ProcessManager
@@ -29,8 +29,8 @@ from cc_team.task_manager import TaskManager
 from cc_team.team_manager import TeamManager
 from cc_team.types import (
     TEAM_LEAD_AGENT_TYPE,
-    TMUX_BACKEND,
     AgentBackend,
+    AgentColor,
     ControllerOptions,
     SpawnAgentOptions,
     TaskFile,
@@ -50,7 +50,7 @@ class Controller(AsyncEventEmitter):
     - plan:approval_request(agent_name, PlanApprovalRequestMessage)
     - permission:request(agent_name, PermissionRequestMessage)
     - task:completed(TaskFile)
-    - agent:spawned(agent_name, pane_id)
+    - agent:spawned(agent_name, backend_id)
     - agent:exited(agent_name, exit_code)
     - error(Exception)
 
@@ -159,34 +159,30 @@ class Controller(AsyncEventEmitter):
 
         await self._start_poller()
 
-        # 从 config 恢复已有 agent handles（验证 pane 存活状态）
+        # Recover existing agent handles from config (verify liveness)
         await self.sync_agents()
 
         self._initialized = True
         self._created_team = False
 
     async def shutdown(self) -> None:
-        """关闭 Controller: 停止轮询 + 终止所有 Agent。
+        """Shutdown Controller: stop polling + terminate all agents.
 
-        仅当 Controller 通过 init() 创建了团队时才销毁团队资源。
-        通过 attach() 接管的团队不会被销毁。
+        Teams created via init() are destroyed on shutdown.
+        Teams attached via attach() are left intact.
         """
         if not self._initialized:
             return
 
-        # 停止轮询
         await self._stop_poller()
 
-        # 强制终止所有存活 Agent
+        # Force-kill all tracked agents via unified deregister
         for name in list(self._handles.keys()):
-            with contextlib.suppress(Exception):
-                await self._process_manager.kill(name)
+            await self._deregister_agent(name, force_kill=True)
 
-        # 仅 init() 创建的团队在 shutdown 时销毁
         if self._created_team:
             await self._team_manager.destroy()
 
-        self._handles.clear()
         self._initialized = False
 
     async def relay(self) -> str:
@@ -245,19 +241,64 @@ class Controller(AsyncEventEmitter):
         if not self._initialized:
             raise NotInitializedError("Controller not initialized, call init() first")
 
-    # ── Agent 同步 ──────────────────────────────────────────
+    # ── Unified Agent State Management ─────────────────────
+    #
+    # _register_agent / _deregister_agent are the ONLY entry points
+    # for adding/removing agents from _handles. This eliminates the
+    # dual-state sync problem between _handles and _panes.
+
+    def _register_agent(
+        self,
+        name: str,
+        *,
+        backend_id: str,
+        color: AgentColor | None = None,
+    ) -> AgentHandle:
+        """Register an agent in Controller tracking (single entry point).
+
+        Creates AgentHandle and stores in _handles.
+        Backend (ProcessManager._panes) is already populated by spawn/track.
+        """
+        handle = AgentHandle(
+            name, self, backend_id=backend_id, color=color,
+        )
+        self._handles[name] = handle
+        return handle
+
+    async def _deregister_agent(
+        self, name: str, *, force_kill: bool = False,
+    ) -> None:
+        """Remove agent from all tracking sources (single exit point).
+
+        Cleans up _handles, backend tracking, and config.json atomically.
+        Each step is guarded so partial failures don't leave stale state.
+
+        Args:
+            name: Agent name
+            force_kill: True = kill backend process; False = just untrack
+        """
+        if force_kill:
+            with contextlib.suppress(Exception):
+                await self._process_manager.kill(name)
+        else:
+            self._process_manager.untrack(name)
+        self._handles.pop(name, None)
+        with contextlib.suppress(AgentNotFoundError):
+            await self._team_manager.remove_member(name)
+
+    # ── Agent Sync ───────────────────────────────────────────
 
     async def sync_agents(self) -> list[AgentHandle]:
-        """发现并恢复/清理 agent 连接。
+        """Discover and recover/cleanup agent connections.
 
-        对 config.json 中每个非 TL active 成员：
-        1. 有 pane_id → 检查 tmux pane 是否存活
-           - 存活 → 创建 handle + 注册到 ProcessManager.track()
-           - 死亡 → update_member(is_active=False)
-        2. 无 pane_id → 跳过（register-only 成员）
+        For each non-TL active member in config.json:
+        1. Has backend_id → check process liveness
+           - alive → register via _register_agent
+           - dead → untrack + mark inactive in config
+        2. No backend_id → skip (register-only member)
 
         Returns:
-            恢复的 AgentHandle 列表
+            List of recovered AgentHandles
         """
         config = self._team_manager.read()
         if config is None:
@@ -272,7 +313,7 @@ class Controller(AsyncEventEmitter):
             if not member.tmux_pane_id:
                 continue
 
-            # Always track first so is_running can resolve the pane
+            # Track first so is_running can resolve the pane
             self._process_manager.track(member.name, member.tmux_pane_id)
             alive = await self._process_manager.is_running(member.name)
             if not alive:
@@ -282,80 +323,44 @@ class Controller(AsyncEventEmitter):
                 )
                 continue
 
-            handle = AgentHandle(
-                member.name, self,
-                pane_id=member.tmux_pane_id,
+            handle = self._register_agent(
+                member.name,
+                backend_id=member.tmux_pane_id,
                 color=member.color,
             )
-            self._handles[member.name] = handle
             synced.append(handle)
 
         return synced
 
-    # ── Agent 管理 ──────────────────────────────────────────
+    # ── Agent Management ─────────────────────────────────────
 
     async def spawn(self, options: SpawnAgentOptions) -> AgentHandle:
-        """Spawn Agent（5 步流程）。
+        """Spawn Agent via shared workflow + register handle + emit event.
 
-        正确顺序（确保进程启动前数据已就绪）:
-        1. 分配颜色 + 注册成员到 config.json
-        2. 写入初始 prompt 到 inbox
-        3. 启动进程（tmux pane 创建 + 命令发送）
-        4. 创建 AgentHandle
-        5. 发射 agent:spawned 事件
-
-        如果步骤 3 失败，回滚步骤 1-2。
+        Steps 1-5 (register → activate → write prompt → spawn → update)
+        are delegated to spawn_agent_workflow(). Controller adds:
+        - _register_agent (unified state entry)
+        - agent:spawned event emission
 
         Returns:
-            AgentHandle 代理对象
+            AgentHandle proxy object
         """
         self._check_initialized()
 
-        # 1. 注册成员（分配颜色 + 写入 config.json + 创建空 inbox）
-        member = await self._team_manager.register_member(
-            name=options.name,
-            agent_type=options.agent_type,
-            model=options.model,
+        backend_id, color = await spawn_agent_workflow(
+            self._team_manager,
+            self._process_manager,
+            options,
+            team_name=self._options.team_name,
             cwd=self._options.cwd or os.getcwd(),
-            plan_mode_required=options.plan_mode_required,
-            backend_type=TMUX_BACKEND,
+            lead_session_id=self._session_id,
         )
 
-        # register_member sets is_active=False; spawn marks active + saves prompt
-        await self._team_manager.update_member(
-            options.name, is_active=True, prompt=options.prompt,
+        handle = self._register_agent(
+            options.name, backend_id=backend_id, color=color,
         )
 
-        # 2. Write initial prompt to inbox (must be ready before process start)
-        inbox = InboxIO(self._options.team_name, options.name)
-        await inbox.write_initial_prompt(TEAM_LEAD_AGENT_TYPE, options.prompt)
-
-        # 3. Start process
-        try:
-            pane_id = await self._process_manager.spawn(
-                options,
-                team_name=self._options.team_name,
-                color=member.color or "",
-                parent_session_id=self._session_id,
-            )
-        except Exception:
-            # Rollback: remove registered member
-            with contextlib.suppress(Exception):
-                await self._team_manager.remove_member(options.name)
-            raise
-
-        # Update member's pane_id
-        await self._team_manager.update_member(options.name, tmux_pane_id=pane_id)
-
-        # 4. Create AgentHandle
-        handle = AgentHandle(
-            options.name, self,
-            pane_id=pane_id, color=member.color,
-        )
-        self._handles[options.name] = handle
-
-        # 5. 发射事件
-        await self.emit("agent:spawned", options.name, pane_id)
+        await self.emit("agent:spawned", options.name, backend_id)
         return handle
 
     def get_handle(self, agent_name: str) -> AgentHandle:
@@ -396,11 +401,9 @@ class Controller(AsyncEventEmitter):
         return await self._message_builder.send_shutdown_request(agent_name, reason)
 
     async def kill_agent(self, agent_name: str) -> None:
-        """强制终止 Agent。"""
+        """Force-terminate Agent (kill process + deregister from all tracking)."""
         self._check_initialized()
-        await self._process_manager.kill(agent_name)
-        self._handles.pop(agent_name, None)
-        await self._team_manager.remove_member(agent_name)
+        await self._deregister_agent(agent_name, force_kill=True)
 
     def is_agent_running(self, agent_name: str) -> bool:
         """检查 Agent 是否存活（同步检查追踪列表）。"""
@@ -506,11 +509,8 @@ class Controller(AsyncEventEmitter):
     # ── 内部事件处理 ────────────────────────────────────────
 
     async def _on_shutdown_approved(self, agent_name: str, _msg: Any) -> None:
-        """处理 Agent 关闭确认。"""
-        self._process_manager.untrack(agent_name)
-        self._handles.pop(agent_name, None)
-        with contextlib.suppress(AgentNotFoundError):
-            await self._team_manager.remove_member(agent_name)
+        """Handle agent shutdown confirmation (graceful exit)."""
+        await self._deregister_agent(agent_name, force_kill=False)
 
     async def _on_poller_error(self, exc: Exception, _context: str) -> None:
         """InboxPoller 异常转发到 error 事件。"""

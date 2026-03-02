@@ -41,11 +41,11 @@ class TestCamelCaseOutputs:
     def test_shutdown_approved_uses_requestId(self) -> None:
         msg = ShutdownApprovedMessage(
             request_id="shutdown-123@w", from_="w",
-            timestamp="t", pane_id="%14", backend_type="tmux",
+            timestamp="t", backend_id="%14", backend_type="tmux",
         )
         d = to_json_dict(msg)
         assert "requestId" in d
-        assert "paneId" in d
+        assert "backendId" in d
         assert "backendType" in d
 
     def test_plan_approval_request_uses_requestId(self) -> None:

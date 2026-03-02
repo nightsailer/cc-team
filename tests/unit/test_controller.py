@@ -151,7 +151,7 @@ class TestSpawn:
         await ctrl.init()
         handle = await ctrl.spawn(SpawnAgentOptions(name="dev", prompt="Work"))
         assert handle.name == "dev"
-        assert handle.pane_id == "%20"
+        assert handle.backend_id == "%20"
         await ctrl.shutdown()
 
     @pytest.mark.asyncio
@@ -642,7 +642,9 @@ class TestAttach:
         await c2.team_manager.destroy()
 
     @pytest.mark.asyncio
-    async def test_attach_team_not_found(self, isolated_home: Path, mock_pm: ProcessManager) -> None:
+    async def test_attach_team_not_found(
+        self, isolated_home: Path, mock_pm: ProcessManager,
+    ) -> None:
         """attach 到不存在的团队应抛出 FileNotFoundError。"""
         c = Controller(
             ControllerOptions(team_name="ghost"),

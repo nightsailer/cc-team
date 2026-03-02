@@ -217,14 +217,14 @@ class TestStructuredMessageRoundtrip:
             request_id="shutdown-1772193660000@worker",
             from_="worker",
             timestamp="2026-02-28T10:01:05.000Z",
-            pane_id="%14",
+            backend_id="%14",
             backend_type="tmux",
         )
         text = build_message_body("shutdown_approved", original)
         result = parse_message_body(text)
         assert result is not None
         _, restored = result
-        assert restored.pane_id == "%14"
+        assert restored.backend_id == "%14"
         assert restored.backend_type == "tmux"
 
     def test_plan_approval_request_roundtrip(self) -> None:

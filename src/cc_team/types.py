@@ -11,7 +11,7 @@ Python 侧统一使用 snake_case，JSON 序列化时按协议要求映射。
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, Final, Literal, Protocol, runtime_checkable
 
 # ── Literal 类型 ────────────────────────────────────────────
 
@@ -28,6 +28,9 @@ TEAM_LEAD_AGENT_TYPE: AgentType = "team-lead"
 
 BackendType = Literal["tmux", "in-process", "agent-sdk"]
 TMUX_BACKEND: BackendType = "tmux"
+
+# Default LLM model, referenced by SpawnAgentOptions / SpawnLeadOptions / ControllerOptions / CLI
+DEFAULT_MODEL: Final[str] = "claude-sonnet-4-6"
 
 AgentColor = Literal["blue", "green", "yellow", "purple", "orange", "pink", "cyan", "red"]
 
@@ -154,7 +157,7 @@ class ShutdownApprovedMessage:
     request_id: str  # (JSON: requestId)
     from_: str  # (JSON: from)
     timestamp: str  # ISO 8601
-    pane_id: str  # tmux pane ID (JSON: paneId)
+    backend_id: str  # backend-specific process identifier (JSON: backendId)
     backend_type: str  # "tmux" 或 "in-process" (JSON: backendType)
 
 
@@ -312,7 +315,7 @@ class AgentBackend(Protocol):
         """Check whether an agent process is alive."""
         ...
 
-    def track(self, agent_name: str, pane_id: str) -> None:
+    def track(self, agent_name: str, backend_id: str) -> None:
         """Register an existing agent into tracking (attach/sync scenarios)."""
         ...
 
@@ -342,7 +345,7 @@ class SpawnAgentOptions:
     name: str  # Agent 名称
     prompt: str  # 初始指令
     agent_type: str = "general-purpose"  # Agent 类型
-    model: str = "claude-sonnet-4-6"  # LLM 模型
+    model: str = DEFAULT_MODEL  # LLM 模型
     cwd: str = ""  # Working directory (defaults to os.getcwd() at spawn time)
     plan_mode_required: bool = False  # 是否强制 plan 模式
     permission_mode: PermissionMode | None = None  # 权限模式
@@ -356,10 +359,10 @@ class SpawnLeadOptions:
 
     team_name: str  # 团队名称
     session_id: str  # Lead 的会话 UUID
-    model: str = "claude-sonnet-4-6"  # LLM 模型
+    model: str = DEFAULT_MODEL  # LLM 模型
     cwd: str = ""  # Working directory (defaults to os.getcwd() at spawn time)
     permission_mode: PermissionMode | None = None  # 权限模式
-    pane_id: str | None = None  # 复用已有 pane (relay 场景)
+    backend_id: str | None = None  # reuse existing backend process (relay scenario)
 
 
 @dataclass
@@ -368,6 +371,6 @@ class ControllerOptions:
 
     team_name: str  # 团队名称
     description: str = ""  # 团队描述
-    model: str = "claude-sonnet-4-6"  # Lead 默认模型
+    model: str = DEFAULT_MODEL  # Lead 默认模型
     cwd: str = ""  # 工作目录（默认 os.getcwd()）
     session_id: str = ""  # Lead 会话 ID（默认自动生成）

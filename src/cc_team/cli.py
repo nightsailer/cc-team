@@ -28,6 +28,8 @@ import time
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from cc_team.types import DEFAULT_MODEL
+
 if TYPE_CHECKING:
     from cc_team.team_manager import TeamManager
     from cc_team.types import TeamConfig, TeamMember
@@ -136,12 +138,12 @@ async def _require_config(name: str) -> tuple[TeamManager, TeamConfig]:
 
 
 async def _spawn_new_lead(
-    mgr: "TeamManager",
+    mgr: TeamManager,
     name: str,
     model: str,
-    pane_id: str | None = None,
+    backend_id: str | None = None,
 ) -> tuple[str, str]:
-    """轮转 session + spawn 新 TL + 更新成员。返回 (pane_id, session_id)。"""
+    """Rotate session + spawn new TL + update member. Returns (backend_id, session_id)."""
     from cc_team.process_manager import ProcessManager
     from cc_team.types import TEAM_LEAD_AGENT_TYPE, SpawnLeadOptions
 
@@ -152,11 +154,11 @@ async def _spawn_new_lead(
         session_id=new_sid,
         model=model,
         cwd=os.getcwd(),
-        pane_id=pane_id,
+        backend_id=backend_id,
     )
-    new_pane = await pm.spawn_lead(options, parent_session_id=new_sid)
-    await mgr.update_member(TEAM_LEAD_AGENT_TYPE, tmux_pane_id=new_pane)
-    return new_pane, new_sid
+    new_bid = await pm.spawn_lead(options, parent_session_id=new_sid)
+    await mgr.update_member(TEAM_LEAD_AGENT_TYPE, tmux_pane_id=new_bid)
+    return new_bid, new_sid
 
 
 async def _cmd_team_takeover(args: argparse.Namespace) -> None:
@@ -180,14 +182,14 @@ async def _cmd_team_takeover(args: argparse.Namespace) -> None:
             else:
                 print(f"Warning: overriding existing TL in pane {lead.tmux_pane_id}")
 
-    pane_id, new_sid = await _spawn_new_lead(
-        mgr, name, args.model, getattr(args, "pane_id", None),
+    backend_id, new_sid = await _spawn_new_lead(
+        mgr, name, args.model, getattr(args, "backend_id", None),
     )
 
     if args.use_json:
-        _json_out({"pane_id": pane_id, "session_id": new_sid})
+        _json_out({"backend_id": backend_id, "session_id": new_sid})
     else:
-        print(f"Takeover complete: pane={pane_id}, session={new_sid}")
+        print(f"Takeover complete: backend={backend_id}, session={new_sid}")
 
 
 async def _cmd_team_relay(args: argparse.Namespace) -> None:
@@ -198,7 +200,7 @@ async def _cmd_team_relay(args: argparse.Namespace) -> None:
     mgr, config = await _require_config(name)
     old_session = config.lead_session_id
 
-    # 获取旧 TL 的 pane_id 并尝试退出
+    # Get old TL's backend_id and attempt graceful exit
     lead = next((m for m in config.members if m.name == TEAM_LEAD_AGENT_TYPE), None)
     if lead and lead.tmux_pane_id:
         tmux = TmuxManager()
@@ -215,20 +217,20 @@ async def _cmd_team_relay(args: argparse.Namespace) -> None:
                     _error(f"TL pane {lead.tmux_pane_id} did not exit within 30s")
                     sys.exit(1)
 
-    new_pane, new_sid = await _spawn_new_lead(mgr, name, args.model)
+    new_bid, new_sid = await _spawn_new_lead(mgr, name, args.model)
 
     if args.use_json:
         _json_out({
             "old_session": old_session,
             "new_session": new_sid,
-            "old_pane": lead.tmux_pane_id if lead else "",
-            "new_pane": new_pane,
+            "old_backend_id": lead.tmux_pane_id if lead else "",
+            "new_backend_id": new_bid,
         })
     else:
-        print(f"Relay complete:")
+        print("Relay complete:")
         print(f"  Old session: {old_session}")
         print(f"  New session: {new_sid}")
-        print(f"  New pane:    {new_pane}")
+        print(f"  New backend: {new_bid}")
 
 
 async def _cmd_team_session(args: argparse.Namespace) -> None:
@@ -279,9 +281,9 @@ async def _cmd_agent_register(args: argparse.Namespace) -> None:
 
 
 async def _cmd_agent_spawn(args: argparse.Namespace) -> None:
-    from cc_team.inbox import InboxIO
+    from cc_team._spawn import spawn_agent_workflow
     from cc_team.process_manager import ProcessManager
-    from cc_team.types import TMUX_BACKEND, SpawnAgentOptions
+    from cc_team.types import SpawnAgentOptions
 
     team = _require_team(args)
     mgr, config = await _require_config(team)
@@ -296,48 +298,26 @@ async def _cmd_agent_spawn(args: argparse.Namespace) -> None:
         cwd=agent_cwd,
     )
 
-    # 1. 注册成员（分配颜色 + config.json + 空 inbox）
-    member = await mgr.register_member(
-        name=options.name,
-        agent_type=options.agent_type,
-        model=options.model,
+    backend_id, color = await spawn_agent_workflow(
+        mgr,
+        ProcessManager(),
+        options,
+        team_name=team,
         cwd=agent_cwd,
-        plan_mode_required=options.plan_mode_required,
-        backend_type=TMUX_BACKEND,
+        lead_session_id=config.lead_session_id,
     )
-    color = member.color or ""
-
-    # 标记为 active + 保存 prompt
-    await mgr.update_member(
-        options.name, is_active=True, prompt=options.prompt,
-    )
-
-    # 2. 写入初始 prompt
-    inbox = InboxIO(team, options.name)
-    await inbox.write_initial_prompt("team-lead", options.prompt)
-
-    # 3. 启动进程
-    pm = ProcessManager()
-    try:
-        pane_id = await pm.spawn(
-            options,
-            team_name=team,
-            color=color,
-            parent_session_id=config.lead_session_id,
-        )
-    except Exception:
-        # 回滚: 移除已注册的成员
-        with contextlib.suppress(Exception):
-            await mgr.remove_member(options.name)
-        raise
-
-    # 更新 pane_id
-    await mgr.update_member(options.name, tmux_pane_id=pane_id)
 
     if args.use_json:
-        _json_out({"name": options.name, "pane_id": pane_id, "color": color})
+        _json_out({
+            "name": options.name,
+            "backend_id": backend_id,
+            "color": color or "",
+        })
     else:
-        print(f"Agent '{options.name}' spawned (pane={pane_id}, color={color})")
+        print(
+            f"Agent '{options.name}' spawned "
+            f"(backend={backend_id}, color={color or ''})"
+        )
 
 
 async def _cmd_agent_list(args: argparse.Namespace) -> None:
@@ -681,13 +661,16 @@ def _build_parser() -> argparse.ArgumentParser:
     td.set_defaults(func=_cmd_team_destroy)
 
     tko = team_sub.add_parser("takeover", help="Takeover team lead (rotate session + spawn TL)")
-    tko.add_argument("--model", default="claude-sonnet-4-6", help="Model for team lead")
-    tko.add_argument("--pane-id", dest="pane_id", help="Reuse existing tmux pane")
+    tko.add_argument("--model", default=DEFAULT_MODEL, help="Model for team lead")
+    tko.add_argument("--pane-id", dest="backend_id", help="Reuse existing tmux pane")
     tko.add_argument("--force", action="store_true", help="Force takeover even if TL is running")
     tko.set_defaults(func=_cmd_team_takeover)
 
-    trl = team_sub.add_parser("relay", help="Context relay (stop old TL + rotate session + spawn new TL)")
-    trl.add_argument("--model", default="claude-sonnet-4-6", help="Model for new team lead")
+    trl = team_sub.add_parser(
+        "relay",
+        help="Context relay (stop old TL + rotate session + spawn new TL)",
+    )
+    trl.add_argument("--model", default=DEFAULT_MODEL, help="Model for new team lead")
     trl.set_defaults(func=_cmd_team_relay)
 
     tss = team_sub.add_parser("session", help="Query or rotate team lead session ID")
@@ -705,7 +688,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--type", default="general-purpose",
         help="Agent type (default: general-purpose)",
     )
-    areg.add_argument("--model", default="claude-sonnet-4-6", help="Model ID")
+    areg.add_argument("--model", default=DEFAULT_MODEL, help="Model ID")
     areg.set_defaults(func=_cmd_agent_register)
 
     asp = agent_sub.add_parser("spawn", help="Spawn a new agent")
@@ -715,7 +698,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--type", default="general-purpose",
         help="Agent type (default: general-purpose)",
     )
-    asp.add_argument("--model", default="claude-sonnet-4-6", help="Model ID")
+    asp.add_argument("--model", default=DEFAULT_MODEL, help="Model ID")
     asp.set_defaults(func=_cmd_agent_spawn)
 
     al = agent_sub.add_parser("list", help="List all agents")
@@ -730,7 +713,10 @@ def _build_parser() -> argparse.ArgumentParser:
     asd.add_argument("--reason", default="CLI shutdown request", help="Shutdown reason")
     asd.set_defaults(func=_cmd_agent_shutdown)
 
-    asyn = agent_sub.add_parser("sync", help="Sync agents: verify pane liveness, mark dead as inactive")
+    asyn = agent_sub.add_parser(
+        "sync",
+        help="Sync agents: verify pane liveness, mark dead as inactive",
+    )
     asyn.set_defaults(func=_cmd_agent_sync)
 
     ak = agent_sub.add_parser("kill", help="Force kill an agent process")

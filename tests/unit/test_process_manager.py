@@ -5,7 +5,7 @@
 - kill（正常/未追踪/pane 已退出）
 - untrack
 - is_running（运行中/已退出/未追踪）
-- 状态查询（get_pane_id / tracked_agents）
+- 状态查询（get_backend_id / tracked_agents）
 - build_cli_args（必选参数/条件参数/权限模式映射）
 - _find_claude_binary（环境变量/PATH/fallback）
 """
@@ -51,8 +51,8 @@ class TestSpawn:
     """spawn() 测试。"""
 
     @pytest.mark.asyncio
-    async def test_spawn_returns_pane_id(self) -> None:
-        """spawn 返回 pane ID。"""
+    async def test_spawn_returns_backend_id(self) -> None:
+        """spawn returns backend-specific process identifier."""
         tmux = _make_mock_tmux()
         pm = ProcessManager(tmux=tmux)
 
@@ -77,7 +77,7 @@ class TestSpawn:
             parent_session_id="s",
         )
         assert "dev" in pm.tracked_agents()
-        assert pm.get_pane_id("dev") == "%20"
+        assert pm.get_backend_id("dev") == "%20"
 
     @pytest.mark.asyncio
     async def test_spawn_calls_split_then_send(self) -> None:
@@ -330,10 +330,10 @@ class TestStateQueries:
         pm = ProcessManager(tmux=_make_mock_tmux())
         assert pm.tracked_agents() == []
 
-    def test_get_pane_id_none(self) -> None:
+    def test_get_backend_id_none(self) -> None:
         """未追踪的 agent 返回 None。"""
         pm = ProcessManager(tmux=_make_mock_tmux())
-        assert pm.get_pane_id("nobody") is None
+        assert pm.get_backend_id("nobody") is None
 
     def test_tmux_property(self) -> None:
         """tmux 属性返回注入的 TmuxManager。"""
@@ -450,6 +450,10 @@ class TestBuildCliArgs:
 class TestFindClaudeBinary:
     """_find_claude_binary() 测试。"""
 
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self) -> None:
+        _find_claude_binary.cache_clear()
+
     def test_env_variable_takes_priority(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -512,7 +516,7 @@ class TestTrack:
         pm = ProcessManager(tmux=_make_mock_tmux())
         pm.track("restored-agent", "%55")
         assert "restored-agent" in pm.tracked_agents()
-        assert pm.get_pane_id("restored-agent") == "%55"
+        assert pm.get_backend_id("restored-agent") == "%55"
 
     @pytest.mark.asyncio
     async def test_track_then_is_running(self) -> None:
@@ -527,7 +531,7 @@ class TestTrack:
         pm = ProcessManager(tmux=_make_mock_tmux())
         pm.track("agent-x", "%10")
         pm.track("agent-x", "%20")
-        assert pm.get_pane_id("agent-x") == "%20"
+        assert pm.get_backend_id("agent-x") == "%20"
 
 
 # ── Protocol Compatibility ──────────────────────────────────
@@ -611,8 +615,8 @@ class TestSpawnLead:
     """spawn_lead() 测试。"""
 
     @pytest.mark.asyncio
-    async def test_spawn_lead_returns_pane_id(self) -> None:
-        """spawn_lead 返回 pane ID。"""
+    async def test_spawn_lead_returns_backend_id(self) -> None:
+        """spawn_lead returns backend-specific process identifier."""
         tmux = _make_mock_tmux()
         pm = ProcessManager(tmux=tmux)
         pane_id = await pm.spawn_lead(
@@ -631,7 +635,7 @@ class TestSpawnLead:
             parent_session_id="s",
         )
         assert "team-lead" in pm.tracked_agents()
-        assert pm.get_pane_id("team-lead") == "%20"
+        assert pm.get_backend_id("team-lead") == "%20"
 
     @pytest.mark.asyncio
     async def test_spawn_lead_command_includes_session_id(self) -> None:
@@ -661,11 +665,11 @@ class TestSpawnLead:
 
     @pytest.mark.asyncio
     async def test_spawn_lead_reuse_pane(self) -> None:
-        """pane_id 参数复用已有 pane（不调用 split_window）。"""
+        """backend_id parameter reuses existing pane (no split_window call)."""
         tmux = _make_mock_tmux()
         pm = ProcessManager(tmux=tmux)
         pane_id = await pm.spawn_lead(
-            _make_lead_options(pane_id="%99"),
+            _make_lead_options(backend_id="%99"),
             parent_session_id="s",
         )
         assert pane_id == "%99"
@@ -679,7 +683,7 @@ class TestSpawnLead:
         pm = ProcessManager(tmux=tmux)
         with pytest.raises(SpawnError, match="not alive"):
             await pm.spawn_lead(
-                _make_lead_options(pane_id="%dead"),
+                _make_lead_options(backend_id="%dead"),
                 parent_session_id="s",
             )
 
@@ -716,7 +720,7 @@ class TestSpawnLead:
         pm = ProcessManager(tmux=tmux)
         with pytest.raises(SpawnError):
             await pm.spawn_lead(
-                _make_lead_options(pane_id="%99"),
+                _make_lead_options(backend_id="%99"),
                 parent_session_id="s",
             )
         tmux.kill_pane.assert_not_awaited()

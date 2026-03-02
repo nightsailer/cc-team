@@ -2,7 +2,7 @@
 
 负责:
 - 通过 tmux spawn Agent 进程
-- 追踪 agent_name → pane_id 映射
+- Track agent_name → backend_id (pane_id) mapping
 - 检查进程存活状态
 - 优雅/强制终止
 - 构建 Claude CLI 参数
@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import contextlib
+import functools
 import os
 import shlex
 import shutil
@@ -95,9 +96,9 @@ class ProcessManager:
 
     # ── 外部注册 ────────────────────────────────────────────
 
-    def track(self, agent_name: str, pane_id: str) -> None:
-        """注册已有 agent 到追踪列表（attach/sync 场景）。"""
-        self._panes[agent_name] = pane_id
+    def track(self, agent_name: str, backend_id: str) -> None:
+        """Register an existing agent into tracking (attach/sync scenarios)."""
+        self._panes[agent_name] = backend_id
 
     # ── 终止 ────────────────────────────────────────────────
 
@@ -127,8 +128,8 @@ class ProcessManager:
             return False
         return await self._tmux.is_pane_alive(pane_id)
 
-    def get_pane_id(self, agent_name: str) -> str | None:
-        """获取 Agent 的 pane ID。"""
+    def get_backend_id(self, agent_name: str) -> str | None:
+        """Get backend-specific process identifier for an agent."""
         return self._panes.get(agent_name)
 
     def tracked_agents(self) -> list[str]:
@@ -248,8 +249,8 @@ class ProcessManager:
             SpawnError: 启动失败
         """
         # 获取或创建 pane
-        if options.pane_id:
-            pane_id = options.pane_id
+        if options.backend_id:
+            pane_id = options.backend_id
             # 验证 pane 存活
             if not await self._tmux.is_pane_alive(pane_id):
                 raise SpawnError(f"Pane {pane_id} is not alive, cannot reuse")
@@ -266,7 +267,7 @@ class ProcessManager:
         )
         command = _build_spawn_command(options.cwd, cli_args)
 
-        await self._send_to_pane(pane_id, command, owned_pane=not options.pane_id)
+        await self._send_to_pane(pane_id, command, owned_pane=not options.backend_id)
 
         self._panes[TEAM_LEAD_AGENT_TYPE] = pane_id
         return pane_id
@@ -296,12 +297,14 @@ def _build_spawn_command(cwd: str, cli_args: list[str]) -> str:
     return f"cd {agent_cwd} && {_ENV_PREFIX}" + shlex.join(cli_args)
 
 
+@functools.lru_cache(maxsize=1)
 def _find_claude_binary() -> str:
-    """查找 claude 可执行文件路径。
+    """Find the claude executable path (cached for process lifetime).
 
-    优先级:
-    1. CC_TEAM_CLAUDE_BIN 环境变量
-    2. PATH 中的 claude
+    Priority:
+    1. CC_TEAM_CLAUDE_BIN environment variable
+    2. claude on PATH
+    3. bare "claude" as fallback
     """
     env_path = os.environ.get("CC_TEAM_CLAUDE_BIN")
     if env_path:

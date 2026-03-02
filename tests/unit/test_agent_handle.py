@@ -1,7 +1,7 @@
 """agent_handle.py 单元测试 — AgentHandle 代理对象验证。
 
 测试覆盖:
-- 属性访问（name / pane_id / color）
+- 属性访问（name / backend_id / color）
 - send() 委托到 Controller
 - shutdown() 委托到 Controller
 - kill() 委托到 Controller
@@ -41,13 +41,13 @@ class TestProperties:
         handle = AgentHandle("worker", _make_controller())
         assert handle.name == "worker"
 
-    def test_pane_id(self) -> None:
-        handle = AgentHandle("w", _make_controller(), pane_id="%5")
-        assert handle.pane_id == "%5"
+    def test_backend_id(self) -> None:
+        handle = AgentHandle("w", _make_controller(), backend_id="%5")
+        assert handle.backend_id == "%5"
 
-    def test_pane_id_default(self) -> None:
+    def test_backend_id_default(self) -> None:
         handle = AgentHandle("w", _make_controller())
-        assert handle.pane_id == ""
+        assert handle.backend_id == ""
 
     def test_color(self) -> None:
         handle = AgentHandle("w", _make_controller(), color="blue")
@@ -138,7 +138,7 @@ class TestRepr:
     """__repr__ 测试。"""
 
     def test_repr_format(self) -> None:
-        handle = AgentHandle("dev", _make_controller(), pane_id="%3", color="green")
+        handle = AgentHandle("dev", _make_controller(), backend_id="%3", color="green")
         r = repr(handle)
         assert "dev" in r
         assert "%3" in r

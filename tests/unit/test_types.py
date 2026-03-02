@@ -245,10 +245,10 @@ class TestStructuredMessages:
             request_id="shutdown-1772193660000@worker",
             from_="worker",
             timestamp="2026-02-28T10:00:00.000Z",
-            pane_id="%14",
+            backend_id="%14",
             backend_type="tmux",
         )
-        assert msg.pane_id == "%14"
+        assert msg.backend_id == "%14"
         assert msg.backend_type == "tmux"
 
     def test_plan_approval_request(self) -> None:

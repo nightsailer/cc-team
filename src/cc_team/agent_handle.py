@@ -23,7 +23,7 @@ class AgentHandle:
     Args:
         name: Agent 名称
         controller: AgentController 实例（Protocol 接口）
-        pane_id: tmux pane ID
+        backend_id: backend-specific process identifier
         color: Agent 颜色
     """
 
@@ -32,12 +32,12 @@ class AgentHandle:
         name: str,
         controller: AgentController,
         *,
-        pane_id: str = "",
+        backend_id: str = "",
         color: AgentColor | None = None,
     ) -> None:
         self._name: str = name
         self._controller: AgentController = controller
-        self._pane_id: str = pane_id
+        self._backend_id: str = backend_id
         self._color: AgentColor | None = color
 
     @property
@@ -46,9 +46,9 @@ class AgentHandle:
         return self._name
 
     @property
-    def pane_id(self) -> str:
-        """tmux pane ID。"""
-        return self._pane_id
+    def backend_id(self) -> str:
+        """Backend-specific process identifier (e.g. tmux pane ID)."""
+        return self._backend_id
 
     @property
     def color(self) -> AgentColor | None:
@@ -92,4 +92,7 @@ class AgentHandle:
     # ── 表示 ────────────────────────────────────────────────
 
     def __repr__(self) -> str:
-        return f"AgentHandle(name={self._name!r}, pane={self._pane_id!r}, color={self._color!r})"
+        return (
+            f"AgentHandle(name={self._name!r}, "
+            f"backend={self._backend_id!r}, color={self._color!r})"
+        )

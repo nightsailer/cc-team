@@ -125,7 +125,7 @@ class TestFullLifecycle:
         ))
         engineer_out = json.loads(capsys.readouterr().out)
         assert engineer_out["name"] == "engineer"
-        assert engineer_out["pane_id"] == "%1"
+        assert engineer_out["backend_id"] == "%1"
 
         # Spawn 测试员
         mock_process_manager.spawn = AsyncMock(return_value="%2")
@@ -136,7 +136,7 @@ class TestFullLifecycle:
         ))
         tester_out = json.loads(capsys.readouterr().out)
         assert tester_out["name"] == "tester"
-        assert tester_out["pane_id"] == "%2"
+        assert tester_out["backend_id"] == "%2"
 
         # 验证: 工程师 inbox 应有初始 prompt
         engineer_inbox = _read_inbox(TEAM_NAME, "engineer")

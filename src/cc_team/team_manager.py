@@ -26,6 +26,7 @@ from cc_team.exceptions import AgentNotFoundError
 from cc_team.filelock import FileLock
 from cc_team.types import (
     AGENT_COLORS,
+    DEFAULT_MODEL,
     TEAM_LEAD_AGENT_TYPE,
     AgentColor,
     BackendType,
@@ -61,7 +62,7 @@ class TeamManager:
         *,
         description: str = "",
         lead_name: str = "team-lead",
-        lead_model: str = "claude-sonnet-4-6",
+        lead_model: str = DEFAULT_MODEL,
         lead_session_id: str = "",
         cwd: str = "",
     ) -> TeamConfig:
@@ -170,7 +171,7 @@ class TeamManager:
         *,
         name: str,
         agent_type: str = "general-purpose",
-        model: str = "claude-sonnet-4-6",
+        model: str = DEFAULT_MODEL,
         cwd: str = "",
         plan_mode_required: bool = False,
         backend_type: BackendType | None = None,

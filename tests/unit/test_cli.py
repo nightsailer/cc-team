@@ -106,7 +106,7 @@ class TestAgentSpawn:
     async def test_spawn_normal_flow(
         self, team: TeamManager, isolated_home: Path
     ) -> None:
-        """正常 spawn 流程：成员注册 + inbox 写入 + pane_id 更新。"""
+        """Normal spawn flow: register member + write inbox + update backend_id."""
         parser = _build_parser()
         args = parser.parse_args([
             "--team-name", "test-team",
@@ -486,7 +486,7 @@ class TestTeamTakeover:
         assert config is not None
         assert config.lead_session_id != ""
 
-        # TL pane_id 应已更新
+        # TL backend_id should be updated
         lead = team.get_member("team-lead")
         assert lead is not None
         assert lead.tmux_pane_id == "%50"
@@ -499,7 +499,7 @@ class TestTeamTakeover:
         self, team: TeamManager, isolated_home: Path,
     ) -> None:
         """TL 已运行且无 --force 时 exit(1)。"""
-        # 先更新 TL 的 pane_id
+        # Update TL's backend_id first
         await team.update_member("team-lead", tmux_pane_id="%42")
 
         parser = _build_parser()

@@ -89,7 +89,7 @@ _PYTHON_TO_JSON: dict[str, str] = {
     "assigned_by": "assignedBy",
     "idle_reason": "idleReason",
     "request_id": "requestId",  # 默认: camelCase
-    "pane_id": "paneId",
+    "backend_id": "backendId",
     "plan_file_path": "planFilePath",
     "plan_content": "planContent",
     "permission_mode": "permissionMode",
