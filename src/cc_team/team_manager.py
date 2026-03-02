@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 
 from cc_team import paths
@@ -226,6 +227,51 @@ class TeamManager:
                     setattr(target, field_name, value)
             atomic_write_json(self._config_path, team_config_to_dict(config))
             return target
+
+    # ── Session 管理 ────────────────────────────────────────
+
+    def get_lead_session_id(self) -> str | None:
+        """获取当前 Team Lead 的 session ID。
+
+        Returns:
+            session ID 或 None（配置不存在时）
+        """
+        config = self.read()
+        if config is None:
+            return None
+        return config.lead_session_id
+
+    async def set_lead_session_id(self, session_id: str) -> None:
+        """设置 Team Lead 的 session ID。
+
+        Raises:
+            FileNotFoundError: 团队配置不存在
+        """
+        async with self._lock.acquire():
+            data = read_json(self._config_path)
+            if data is None:
+                raise FileNotFoundError(f"Team config not found: {self._config_path}")
+            config = team_config_from_dict(data)
+            config.lead_session_id = session_id
+            atomic_write_json(self._config_path, team_config_to_dict(config))
+
+    async def rotate_session(self, new_session_id: str | None = None) -> str:
+        """轮转 Team Lead session ID。
+
+        生成新的 UUID（或使用提供的 ID），原子写入 config.json。
+
+        Args:
+            new_session_id: 指定新 ID，为 None 时自动生成 UUID4
+
+        Returns:
+            新的 session ID
+
+        Raises:
+            FileNotFoundError: 团队配置不存在
+        """
+        sid = new_session_id or str(uuid.uuid4())
+        await self.set_lead_session_id(sid)
+        return sid
 
     # ── 销毁 ────────────────────────────────────────────────
 

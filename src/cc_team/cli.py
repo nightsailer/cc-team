@@ -24,11 +24,13 @@ import contextlib
 import json
 import os
 import sys
+import time
 import uuid
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from cc_team.types import TeamMember
+    from cc_team.team_manager import TeamManager
+    from cc_team.types import TeamConfig, TeamMember
 
 # ── 输出辅助 ──────────────────────────────────────────────
 
@@ -119,6 +121,137 @@ async def _cmd_team_destroy(args: argparse.Namespace) -> None:
     await mgr.destroy()
     if not args.quiet:
         print(f"Team '{name}' destroyed.")
+
+
+async def _require_config(name: str) -> tuple[TeamManager, TeamConfig]:
+    """读取并验证团队配置，返回 (TeamManager, TeamConfig)。不存在时 exit(1)。"""
+    from cc_team.team_manager import TeamManager as _TM
+
+    mgr = _TM(name)
+    config = mgr.read()
+    if config is None:
+        _error(f"Team '{name}' not found.")
+        sys.exit(1)
+    return mgr, config
+
+
+async def _spawn_new_lead(
+    mgr: "TeamManager",
+    name: str,
+    model: str,
+    pane_id: str | None = None,
+) -> tuple[str, str]:
+    """轮转 session + spawn 新 TL + 更新成员。返回 (pane_id, session_id)。"""
+    from cc_team.process_manager import ProcessManager
+    from cc_team.types import TEAM_LEAD_AGENT_TYPE, SpawnLeadOptions
+
+    new_sid = await mgr.rotate_session()
+    pm = ProcessManager()
+    options = SpawnLeadOptions(
+        team_name=name,
+        session_id=new_sid,
+        model=model,
+        cwd=os.getcwd(),
+        pane_id=pane_id,
+    )
+    new_pane = await pm.spawn_lead(options, parent_session_id=new_sid)
+    await mgr.update_member(TEAM_LEAD_AGENT_TYPE, tmux_pane_id=new_pane)
+    return new_pane, new_sid
+
+
+async def _cmd_team_takeover(args: argparse.Namespace) -> None:
+    from cc_team.tmux import TmuxManager
+    from cc_team.types import TEAM_LEAD_AGENT_TYPE
+
+    name = _require_team(args)
+    mgr, config = await _require_config(name)
+
+    # 检查 TL 是否已运行（从已读取的 config 中查找）
+    lead = next((m for m in config.members if m.name == TEAM_LEAD_AGENT_TYPE), None)
+    if lead and lead.tmux_pane_id:
+        tmux = TmuxManager()
+        if await tmux.is_pane_alive(lead.tmux_pane_id):
+            if not getattr(args, "force", False):
+                _error(
+                    f"Team Lead is still running in pane {lead.tmux_pane_id}. "
+                    "Use --force to override."
+                )
+                sys.exit(1)
+            else:
+                print(f"Warning: overriding existing TL in pane {lead.tmux_pane_id}")
+
+    pane_id, new_sid = await _spawn_new_lead(
+        mgr, name, args.model, getattr(args, "pane_id", None),
+    )
+
+    if args.use_json:
+        _json_out({"pane_id": pane_id, "session_id": new_sid})
+    else:
+        print(f"Takeover complete: pane={pane_id}, session={new_sid}")
+
+
+async def _cmd_team_relay(args: argparse.Namespace) -> None:
+    from cc_team.tmux import TmuxManager
+    from cc_team.types import TEAM_LEAD_AGENT_TYPE
+
+    name = _require_team(args)
+    mgr, config = await _require_config(name)
+    old_session = config.lead_session_id
+
+    # 获取旧 TL 的 pane_id 并尝试退出
+    lead = next((m for m in config.members if m.name == TEAM_LEAD_AGENT_TYPE), None)
+    if lead and lead.tmux_pane_id:
+        tmux = TmuxManager()
+        if await tmux.is_pane_alive(lead.tmux_pane_id):
+            await tmux.send_command(lead.tmux_pane_id, "/exit")
+            # 轮询等待退出 (30s timeout)
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                if not await tmux.is_pane_alive(lead.tmux_pane_id):
+                    break
+                await asyncio.sleep(1)
+            else:
+                if await tmux.is_pane_alive(lead.tmux_pane_id):
+                    _error(f"TL pane {lead.tmux_pane_id} did not exit within 30s")
+                    sys.exit(1)
+
+    new_pane, new_sid = await _spawn_new_lead(mgr, name, args.model)
+
+    if args.use_json:
+        _json_out({
+            "old_session": old_session,
+            "new_session": new_sid,
+            "old_pane": lead.tmux_pane_id if lead else "",
+            "new_pane": new_pane,
+        })
+    else:
+        print(f"Relay complete:")
+        print(f"  Old session: {old_session}")
+        print(f"  New session: {new_sid}")
+        print(f"  New pane:    {new_pane}")
+
+
+async def _cmd_team_session(args: argparse.Namespace) -> None:
+    name = _require_team(args)
+    mgr, config = await _require_config(name)
+
+    if args.rotate:
+        new_sid = await mgr.rotate_session()
+        if args.use_json:
+            _json_out({"session_id": new_sid})
+        else:
+            print(f"Session rotated: {new_sid}")
+    elif args.set_id:
+        await mgr.set_lead_session_id(args.set_id)
+        if args.use_json:
+            _json_out({"session_id": args.set_id})
+        else:
+            print(f"Session set: {args.set_id}")
+    else:
+        if args.use_json:
+            _json_out({"session_id": config.lead_session_id})
+        else:
+            print(config.lead_session_id)
 
 
 # ── agent 子命令 ──────────────────────────────────────────
@@ -499,6 +632,21 @@ def _build_parser() -> argparse.ArgumentParser:
 
     td = team_sub.add_parser("destroy", help="Destroy a team and all resources")
     td.set_defaults(func=_cmd_team_destroy)
+
+    tko = team_sub.add_parser("takeover", help="Takeover team lead (rotate session + spawn TL)")
+    tko.add_argument("--model", default="claude-sonnet-4-6", help="Model for team lead")
+    tko.add_argument("--pane-id", dest="pane_id", help="Reuse existing tmux pane")
+    tko.add_argument("--force", action="store_true", help="Force takeover even if TL is running")
+    tko.set_defaults(func=_cmd_team_takeover)
+
+    trl = team_sub.add_parser("relay", help="Context relay (stop old TL + rotate session + spawn new TL)")
+    trl.add_argument("--model", default="claude-sonnet-4-6", help="Model for new team lead")
+    trl.set_defaults(func=_cmd_team_relay)
+
+    tss = team_sub.add_parser("session", help="Query or rotate team lead session ID")
+    tss.add_argument("--rotate", action="store_true", help="Generate new UUID session ID")
+    tss.add_argument("--set", dest="set_id", help="Set specific session ID")
+    tss.set_defaults(func=_cmd_team_session)
 
     # ── agent ─────────────────────────────────
     agent_p = sub.add_parser("agent", help="Agent management")

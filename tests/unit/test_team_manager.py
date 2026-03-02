@@ -553,3 +553,50 @@ class TestUpdateMemberInvalidField:
         assert updated.cwd == "/valid-update"
         assert not hasattr(updated, "nonexistent_field") or \
                getattr(updated, "nonexistent_field", None) is None
+
+
+# ── Session 管理 [R4] ──────────────────────────────────────
+
+
+class TestSessionManagement:
+    """get_lead_session_id / set_lead_session_id / rotate_session 测试。"""
+
+    @pytest.mark.asyncio
+    async def test_get_lead_session_id(self, manager: TeamManager) -> None:
+        """创建后可获取 lead session ID。"""
+        await manager.create(lead_session_id="sess-abc")
+        assert manager.get_lead_session_id() == "sess-abc"
+
+    def test_get_lead_session_id_no_config(self, manager: TeamManager) -> None:
+        """无 config 时返回 None。"""
+        assert manager.get_lead_session_id() is None
+
+    @pytest.mark.asyncio
+    async def test_set_lead_session_id(self, manager: TeamManager) -> None:
+        """set 后 get 返回新值。"""
+        await manager.create(lead_session_id="old-sess")
+        await manager.set_lead_session_id("new-sess")
+        assert manager.get_lead_session_id() == "new-sess"
+
+    @pytest.mark.asyncio
+    async def test_set_lead_session_id_no_config_raises(self, manager: TeamManager) -> None:
+        """无 config 时 set 抛出 FileNotFoundError。"""
+        with pytest.raises(FileNotFoundError):
+            await manager.set_lead_session_id("any")
+
+    @pytest.mark.asyncio
+    async def test_rotate_session_auto_uuid(self, manager: TeamManager) -> None:
+        """rotate_session 无参数时自动生成 UUID4。"""
+        await manager.create(lead_session_id="old")
+        new_sid = await manager.rotate_session()
+        assert new_sid != "old"
+        assert len(new_sid) == 36  # UUID4 格式
+        assert manager.get_lead_session_id() == new_sid
+
+    @pytest.mark.asyncio
+    async def test_rotate_session_explicit_id(self, manager: TeamManager) -> None:
+        """rotate_session 指定 ID 时使用该值。"""
+        await manager.create(lead_session_id="old")
+        new_sid = await manager.rotate_session("explicit-id")
+        assert new_sid == "explicit-id"
+        assert manager.get_lead_session_id() == "explicit-id"

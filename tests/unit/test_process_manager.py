@@ -20,7 +20,7 @@ import pytest
 from cc_team.exceptions import AgentNotFoundError, SpawnError, TmuxError
 from cc_team.process_manager import ProcessManager, _find_claude_binary
 from cc_team.tmux import TmuxManager
-from cc_team.types import AgentBackend, SpawnAgentOptions
+from cc_team.types import AgentBackend, SpawnAgentOptions, SpawnLeadOptions
 
 # ── Mock Helpers ──────────────────────────────────────────────
 
@@ -511,3 +511,183 @@ class TestProtocolCompatibility:
         """ProcessManager is a runtime-checkable AgentBackend."""
         pm = ProcessManager(tmux=_make_mock_tmux())
         assert isinstance(pm, AgentBackend)
+
+
+# ── build_lead_cli_args ─────────────────────────────────────
+
+
+def _make_lead_options(**kwargs: Any) -> SpawnLeadOptions:
+    """创建 SpawnLeadOptions。"""
+    defaults: dict[str, Any] = {
+        "team_name": "my-team",
+        "session_id": "sess-lead-1",
+    }
+    defaults.update(kwargs)
+    return SpawnLeadOptions(**defaults)
+
+
+class TestBuildLeadCliArgs:
+    """build_lead_cli_args() 测试。"""
+
+    def test_required_args(self) -> None:
+        """必选参数全部包含。"""
+        args = ProcessManager.build_lead_cli_args(
+            _make_lead_options(),
+            parent_session_id="sess-parent",
+        )
+        assert "--agent-id" in args
+        idx = args.index("--agent-id")
+        assert args[idx + 1] == "team-lead@my-team"
+
+        assert "--agent-name" in args
+        assert args[args.index("--agent-name") + 1] == "team-lead"
+        assert "--team-name" in args
+        assert "--parent-session-id" in args
+        assert "--agent-type" in args
+        assert args[args.index("--agent-type") + 1] == "team-lead"
+        assert "--model" in args
+        assert "--session-id" in args
+        assert args[args.index("--session-id") + 1] == "sess-lead-1"
+
+    def test_no_agent_color(self) -> None:
+        """TL 不应有 --agent-color 参数。"""
+        args = ProcessManager.build_lead_cli_args(
+            _make_lead_options(),
+            parent_session_id="s",
+        )
+        assert "--agent-color" not in args
+
+    def test_permission_mode(self) -> None:
+        """permission_mode 传递到 CLI 参数。"""
+        args = ProcessManager.build_lead_cli_args(
+            _make_lead_options(permission_mode="bypassPermissions"),
+            parent_session_id="s",
+        )
+        assert "--dangerously-skip-permissions" in args
+
+    def test_no_optional_args(self) -> None:
+        """无可选参数时不添加额外标志。"""
+        args = ProcessManager.build_lead_cli_args(
+            _make_lead_options(),
+            parent_session_id="s",
+        )
+        assert "--permission-mode" not in args
+        assert "--dangerously-skip-permissions" not in args
+
+
+# ── spawn_lead ──────────────────────────────────────────────
+
+
+class TestSpawnLead:
+    """spawn_lead() 测试。"""
+
+    @pytest.mark.asyncio
+    async def test_spawn_lead_returns_pane_id(self) -> None:
+        """spawn_lead 返回 pane ID。"""
+        tmux = _make_mock_tmux()
+        pm = ProcessManager(tmux=tmux)
+        pane_id = await pm.spawn_lead(
+            _make_lead_options(),
+            parent_session_id="sess-parent",
+        )
+        assert pane_id == "%20"
+
+    @pytest.mark.asyncio
+    async def test_spawn_lead_tracks_as_team_lead(self) -> None:
+        """spawn_lead 后 'team-lead' 被追踪。"""
+        tmux = _make_mock_tmux()
+        pm = ProcessManager(tmux=tmux)
+        await pm.spawn_lead(
+            _make_lead_options(),
+            parent_session_id="s",
+        )
+        assert "team-lead" in pm.tracked_agents()
+        assert pm.get_pane_id("team-lead") == "%20"
+
+    @pytest.mark.asyncio
+    async def test_spawn_lead_command_includes_session_id(self) -> None:
+        """spawn_lead 命令包含 --session-id。"""
+        tmux = _make_mock_tmux()
+        pm = ProcessManager(tmux=tmux)
+        await pm.spawn_lead(
+            _make_lead_options(session_id="my-uuid"),
+            parent_session_id="s",
+        )
+        command = tmux.send_command.call_args[0][1]
+        assert "--session-id" in command
+        assert "my-uuid" in command
+
+    @pytest.mark.asyncio
+    async def test_spawn_lead_command_includes_env_vars(self) -> None:
+        """spawn_lead 命令包含 CLAUDECODE 和 AGENT_TEAMS 环境变量。"""
+        tmux = _make_mock_tmux()
+        pm = ProcessManager(tmux=tmux)
+        await pm.spawn_lead(
+            _make_lead_options(),
+            parent_session_id="s",
+        )
+        command = tmux.send_command.call_args[0][1]
+        assert "CLAUDECODE=1" in command
+        assert "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1" in command
+
+    @pytest.mark.asyncio
+    async def test_spawn_lead_reuse_pane(self) -> None:
+        """pane_id 参数复用已有 pane（不调用 split_window）。"""
+        tmux = _make_mock_tmux()
+        pm = ProcessManager(tmux=tmux)
+        pane_id = await pm.spawn_lead(
+            _make_lead_options(pane_id="%99"),
+            parent_session_id="s",
+        )
+        assert pane_id == "%99"
+        tmux.split_window.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_spawn_lead_reuse_dead_pane_raises(self) -> None:
+        """复用已死的 pane 应抛出 SpawnError。"""
+        tmux = _make_mock_tmux()
+        tmux.is_pane_alive = AsyncMock(return_value=False)
+        pm = ProcessManager(tmux=tmux)
+        with pytest.raises(SpawnError, match="not alive"):
+            await pm.spawn_lead(
+                _make_lead_options(pane_id="%dead"),
+                parent_session_id="s",
+            )
+
+    @pytest.mark.asyncio
+    async def test_spawn_lead_split_failure(self) -> None:
+        """split_window 失败时抛出 SpawnError。"""
+        tmux = _make_mock_tmux()
+        tmux.split_window = AsyncMock(side_effect=TmuxError("no tmux"))
+        pm = ProcessManager(tmux=tmux)
+        with pytest.raises(SpawnError, match="Failed to create tmux pane"):
+            await pm.spawn_lead(
+                _make_lead_options(),
+                parent_session_id="s",
+            )
+
+    @pytest.mark.asyncio
+    async def test_spawn_lead_send_failure_cleans_new_pane(self) -> None:
+        """send_command 失败时清理新创建的 pane。"""
+        tmux = _make_mock_tmux()
+        tmux.send_command = AsyncMock(side_effect=TmuxError("send failed"))
+        pm = ProcessManager(tmux=tmux)
+        with pytest.raises(SpawnError, match="Failed to send command"):
+            await pm.spawn_lead(
+                _make_lead_options(),
+                parent_session_id="s",
+            )
+        tmux.kill_pane.assert_awaited_once_with("%20")
+
+    @pytest.mark.asyncio
+    async def test_spawn_lead_send_failure_no_kill_reused_pane(self) -> None:
+        """send_command 失败时不 kill 复用的 pane。"""
+        tmux = _make_mock_tmux()
+        tmux.send_command = AsyncMock(side_effect=TmuxError("send failed"))
+        pm = ProcessManager(tmux=tmux)
+        with pytest.raises(SpawnError):
+            await pm.spawn_lead(
+                _make_lead_options(pane_id="%99"),
+                parent_session_id="s",
+            )
+        tmux.kill_pane.assert_not_awaited()

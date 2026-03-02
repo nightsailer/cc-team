@@ -331,6 +331,18 @@ class SpawnAgentOptions:
 
 
 @dataclass
+class SpawnLeadOptions:
+    """spawn Team Lead 进程时的配置选项。"""
+
+    team_name: str  # 团队名称
+    session_id: str  # Lead 的会话 UUID
+    model: str = "claude-sonnet-4-6"  # LLM 模型
+    cwd: str = ""  # Working directory (defaults to os.getcwd() at spawn time)
+    permission_mode: PermissionMode | None = None  # 权限模式
+    pane_id: str | None = None  # 复用已有 pane (relay 场景)
+
+
+@dataclass
 class ControllerOptions:
     """Controller 初始化选项。"""
 

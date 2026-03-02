@@ -29,6 +29,7 @@ from cc_team.process_manager import ProcessManager
 from cc_team.task_manager import TaskManager
 from cc_team.team_manager import TeamManager
 from cc_team.types import (
+    TEAM_LEAD_AGENT_TYPE,
     AgentBackend,
     ControllerOptions,
     SpawnAgentOptions,
@@ -71,6 +72,7 @@ class Controller(AsyncEventEmitter):
         super().__init__()
         self._options = options
         self._initialized = False
+        self._created_team = False  # init() 创建的团队在 shutdown 时销毁
 
         # 子系统
         self._team_manager = TeamManager(options.team_name)
@@ -126,34 +128,118 @@ class Controller(AsyncEventEmitter):
         # 注册内部事件 handler（在 poller 启动前，确保不遗漏消息）
         self.on("shutdown:approved", self._on_shutdown_approved)
 
-        # 启动 Lead inbox 轮询
-        self._poller = InboxPoller(
-            self._options.team_name, "team-lead",
-        )
-        self._poller.on_message(self._event_router.route)
-        self._poller.on_error(self._on_poller_error)
-        await self._poller.start()
+        await self._start_poller()
 
         self._initialized = True
+        self._created_team = True
+
+    async def attach(self) -> None:
+        """接管已存在的团队（不创建新团队）。
+
+        用于 takeover 场景：Controller 连接到一个已有的团队，
+        恢复 agent handles，启动 inbox 轮询，但不创建/销毁团队资源。
+
+        Raises:
+            FileNotFoundError: 团队配置不存在
+            NotInitializedError: 重复初始化
+        """
+        if self._initialized:
+            raise NotInitializedError("Controller already initialized")
+
+        config = self._team_manager.read()
+        if config is None:
+            raise FileNotFoundError(
+                f"Team '{self._options.team_name}' not found"
+            )
+
+        # 使用配置中的 session_id
+        self._session_id = config.lead_session_id
+
+        # 注册内部事件 handler
+        self.on("shutdown:approved", self._on_shutdown_approved)
+
+        await self._start_poller()
+
+        # 从 config 恢复已有 agent handles（非 TL 的 active 成员）
+        for member in config.members:
+            if member.agent_type == TEAM_LEAD_AGENT_TYPE:
+                continue
+            if not member.is_active:
+                continue
+            handle = AgentHandle(
+                member.name, self,
+                pane_id=member.tmux_pane_id,
+                color=member.color or "",
+            )
+            self._handles[member.name] = handle
+
+        self._initialized = True
+        self._created_team = False
 
     async def shutdown(self) -> None:
-        """关闭 Controller: 停止轮询 + 终止所有 Agent + 销毁团队。"""
+        """关闭 Controller: 停止轮询 + 终止所有 Agent。
+
+        仅当 Controller 通过 init() 创建了团队时才销毁团队资源。
+        通过 attach() 接管的团队不会被销毁。
+        """
         if not self._initialized:
             return
 
         # 停止轮询
-        if self._poller:
-            await self._poller.stop()
+        await self._stop_poller()
 
         # 强制终止所有存活 Agent
         for name in list(self._handles.keys()):
             with contextlib.suppress(Exception):
                 await self._process_manager.kill(name)
 
-        # 销毁团队
-        await self._team_manager.destroy()
+        # 仅 init() 创建的团队在 shutdown 时销毁
+        if self._created_team:
+            await self._team_manager.destroy()
+
         self._handles.clear()
         self._initialized = False
+
+    async def relay(self) -> str:
+        """上下文接力：轮转 session ID + 重启 poller。
+
+        SDK 用户调用此方法进行 session 轮转。TL 进程的停止/重启
+        由调用方处理（CLI 或上层应用），因为 Controller 不一定管理
+        TL 进程（attach 模式下 TL 在外部 tmux 中运行）。
+
+        Returns:
+            新的 session ID
+
+        Raises:
+            NotInitializedError: Controller 未初始化
+        """
+        self._check_initialized()
+
+        # 停止当前 poller
+        await self._stop_poller()
+
+        # 轮转 session
+        self._session_id = await self._team_manager.rotate_session()
+
+        # 重启 poller
+        await self._start_poller()
+
+        return self._session_id
+
+    async def _start_poller(self) -> None:
+        """创建并启动 Lead inbox 轮询器。"""
+        self._poller = InboxPoller(
+            self._options.team_name, TEAM_LEAD_AGENT_TYPE,
+        )
+        self._poller.on_message(self._event_router.route)
+        self._poller.on_error(self._on_poller_error)
+        await self._poller.start()
+
+    async def _stop_poller(self) -> None:
+        """停止轮询器并释放引用。"""
+        if self._poller:
+            await self._poller.stop()
+            self._poller = None
 
     def _check_initialized(self) -> None:
         if not self._initialized:
@@ -198,7 +284,7 @@ class Controller(AsyncEventEmitter):
 
         # 2. 写入初始 prompt 到 inbox（进程启动前必须就绪）
         inbox = InboxIO(self._options.team_name, options.name)
-        await inbox.write_initial_prompt("team-lead", options.prompt)
+        await inbox.write_initial_prompt(TEAM_LEAD_AGENT_TYPE, options.prompt)
 
         # 3. 启动进程
         try:

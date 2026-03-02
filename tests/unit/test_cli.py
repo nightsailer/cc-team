@@ -338,3 +338,227 @@ class TestSkillCommand:
         assert hasattr(args, "func")
         # team_name should be None (not required)
         assert args.team_name is None
+
+
+# ── team takeover ──────────────────────────────────────────
+
+
+class TestTeamTakeover:
+    """team takeover CLI 测试。"""
+
+    @pytest.mark.asyncio
+    async def test_takeover_team_not_found_exits(self, isolated_home: Path) -> None:
+        """团队不存在时 exit(1)。"""
+        parser = _build_parser()
+        args = parser.parse_args([
+            "--team-name", "ghost", "team", "takeover",
+        ])
+        with pytest.raises(SystemExit):
+            await args.func(args)
+
+    @pytest.mark.asyncio
+    async def test_takeover_normal_flow(
+        self, team: TeamManager, isolated_home: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """正常 takeover：轮转 session + spawn TL + 更新 pane。"""
+        parser = _build_parser()
+        args = parser.parse_args([
+            "--team-name", "test-team",
+            "team", "takeover",
+        ])
+
+        with patch("cc_team.process_manager.ProcessManager") as MockPM:
+            mock_pm = MockPM.return_value
+            mock_pm.spawn_lead = AsyncMock(return_value="%50")
+
+            await args.func(args)
+
+        # session 应已轮转
+        config = team.read()
+        assert config is not None
+        assert config.lead_session_id != ""
+
+        # TL pane_id 应已更新
+        lead = team.get_member("team-lead")
+        assert lead is not None
+        assert lead.tmux_pane_id == "%50"
+
+        captured = capsys.readouterr()
+        assert "Takeover complete" in captured.out
+
+    @pytest.mark.asyncio
+    async def test_takeover_tl_running_no_force_exits(
+        self, team: TeamManager, isolated_home: Path,
+    ) -> None:
+        """TL 已运行且无 --force 时 exit(1)。"""
+        # 先更新 TL 的 pane_id
+        await team.update_member("team-lead", tmux_pane_id="%42")
+
+        parser = _build_parser()
+        args = parser.parse_args([
+            "--team-name", "test-team",
+            "team", "takeover",
+        ])
+
+        with patch("cc_team.tmux.TmuxManager") as MockTmux:
+            mock_tmux = MockTmux.return_value
+            mock_tmux.is_pane_alive = AsyncMock(return_value=True)
+
+            with pytest.raises(SystemExit):
+                await args.func(args)
+
+    @pytest.mark.asyncio
+    async def test_takeover_force_overrides_running_tl(
+        self, team: TeamManager, isolated_home: Path,
+    ) -> None:
+        """--force 强制接管已运行的 TL。"""
+        await team.update_member("team-lead", tmux_pane_id="%42")
+
+        parser = _build_parser()
+        args = parser.parse_args([
+            "--team-name", "test-team",
+            "team", "takeover", "--force",
+        ])
+
+        with patch("cc_team.tmux.TmuxManager") as MockTmux, \
+             patch("cc_team.process_manager.ProcessManager") as MockPM:
+            mock_tmux = MockTmux.return_value
+            mock_tmux.is_pane_alive = AsyncMock(return_value=True)
+            mock_pm = MockPM.return_value
+            mock_pm.spawn_lead = AsyncMock(return_value="%60")
+
+            await args.func(args)
+
+        lead = team.get_member("team-lead")
+        assert lead is not None
+        assert lead.tmux_pane_id == "%60"
+
+
+# ── team relay ─────────────────────────────────────────────
+
+
+class TestTeamRelay:
+    """team relay CLI 测试。"""
+
+    @pytest.mark.asyncio
+    async def test_relay_team_not_found_exits(self, isolated_home: Path) -> None:
+        """团队不存在时 exit(1)。"""
+        parser = _build_parser()
+        args = parser.parse_args([
+            "--team-name", "ghost", "team", "relay",
+        ])
+        with pytest.raises(SystemExit):
+            await args.func(args)
+
+    @pytest.mark.asyncio
+    async def test_relay_normal_flow(
+        self, team: TeamManager, isolated_home: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """正常 relay：退出旧 TL + 轮转 session + spawn 新 TL。"""
+        old_config = team.read()
+        assert old_config is not None
+        old_sid = old_config.lead_session_id
+
+        parser = _build_parser()
+        args = parser.parse_args([
+            "--team-name", "test-team",
+            "team", "relay",
+        ])
+
+        with patch("cc_team.process_manager.ProcessManager") as MockPM:
+            mock_pm = MockPM.return_value
+            mock_pm.spawn_lead = AsyncMock(return_value="%70")
+
+            await args.func(args)
+
+        # session 应已轮转
+        config = team.read()
+        assert config is not None
+        assert config.lead_session_id != old_sid
+
+        # TL pane 已更新
+        lead = team.get_member("team-lead")
+        assert lead is not None
+        assert lead.tmux_pane_id == "%70"
+
+        captured = capsys.readouterr()
+        assert "Relay complete" in captured.out
+
+
+# ── team session ───────────────────────────────────────────
+
+
+class TestTeamSession:
+    """team session CLI 测试。"""
+
+    @pytest.mark.asyncio
+    async def test_session_query(
+        self, team: TeamManager, isolated_home: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """无参数查询当前 session ID。"""
+        parser = _build_parser()
+        args = parser.parse_args([
+            "--team-name", "test-team",
+            "team", "session",
+        ])
+        await args.func(args)
+        captured = capsys.readouterr()
+        config = team.read()
+        assert config is not None
+        assert config.lead_session_id in captured.out
+
+    @pytest.mark.asyncio
+    async def test_session_rotate(
+        self, team: TeamManager, isolated_home: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """--rotate 生成新 UUID。"""
+        old_config = team.read()
+        assert old_config is not None
+        old_sid = old_config.lead_session_id
+
+        parser = _build_parser()
+        args = parser.parse_args([
+            "--team-name", "test-team",
+            "team", "session", "--rotate",
+        ])
+        await args.func(args)
+
+        config = team.read()
+        assert config is not None
+        assert config.lead_session_id != old_sid
+        captured = capsys.readouterr()
+        assert "Session rotated" in captured.out
+
+    @pytest.mark.asyncio
+    async def test_session_set(
+        self, team: TeamManager, isolated_home: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """--set 指定值。"""
+        parser = _build_parser()
+        args = parser.parse_args([
+            "--team-name", "test-team",
+            "team", "session", "--set", "my-custom-id",
+        ])
+        await args.func(args)
+
+        config = team.read()
+        assert config is not None
+        assert config.lead_session_id == "my-custom-id"
+        captured = capsys.readouterr()
+        assert "Session set" in captured.out
+
+    @pytest.mark.asyncio
+    async def test_session_not_found_exits(self, isolated_home: Path) -> None:
+        """团队不存在时 exit(1)。"""
+        parser = _build_parser()
+        args = parser.parse_args([
+            "--team-name", "ghost",
+            "team", "session",
+        ])
+        with pytest.raises(SystemExit):
+            await args.func(args)

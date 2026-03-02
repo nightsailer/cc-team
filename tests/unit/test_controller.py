@@ -599,3 +599,166 @@ class TestUpdateTaskOwnerChange:
         assignments = [m for m in msgs if '"task_assignment"' in m.get("text", "")]
         assert len(assignments) >= 1
         await ctrl.shutdown()
+
+
+# ── Attach [R1] ─────────────────────────────────────────────
+
+
+class TestAttach:
+    """attach() 测试。"""
+
+    @pytest.mark.asyncio
+    async def test_attach_normal(self, isolated_home: Path, mock_pm: ProcessManager) -> None:
+        """attach 到已存在的团队，恢复 session_id。"""
+        # 先用另一个 Controller 创建团队
+        c1 = Controller(
+            ControllerOptions(team_name="test-team", session_id="orig-sess"),
+            process_manager=mock_pm,
+        )
+        await c1.init()
+        await c1.spawn(SpawnAgentOptions(name="worker", prompt="hi"))
+        # 保留团队但释放 controller（模拟 TL 退出）
+        # 直接 stop poller + clear，不 destroy
+        if c1._poller:
+            await c1._poller.stop()
+        c1._initialized = False
+
+        # 用新 Controller attach
+        c2 = Controller(
+            ControllerOptions(team_name="test-team"),
+            process_manager=mock_pm,
+        )
+        await c2.attach()
+
+        assert c2._initialized is True
+        assert c2.session_id == "orig-sess"
+        # 应恢复 worker handle
+        assert "worker" in c2.list_agents()
+        # shutdown 不应 destroy 团队
+        await c2.shutdown()
+        # 团队仍存在
+        assert c2.team_manager.read() is not None
+        # 清理
+        await c2.team_manager.destroy()
+
+    @pytest.mark.asyncio
+    async def test_attach_team_not_found(self, isolated_home: Path, mock_pm: ProcessManager) -> None:
+        """attach 到不存在的团队应抛出 FileNotFoundError。"""
+        c = Controller(
+            ControllerOptions(team_name="ghost"),
+            process_manager=mock_pm,
+        )
+        with pytest.raises(FileNotFoundError, match="ghost"):
+            await c.attach()
+
+    @pytest.mark.asyncio
+    async def test_attach_double_raises(self, isolated_home: Path, mock_pm: ProcessManager) -> None:
+        """重复 attach 抛出 NotInitializedError。"""
+        from cc_team.team_manager import TeamManager
+        mgr = TeamManager("test-team")
+        await mgr.create(lead_session_id="s1")
+
+        c = Controller(
+            ControllerOptions(team_name="test-team"),
+            process_manager=mock_pm,
+        )
+        await c.attach()
+        with pytest.raises(NotInitializedError, match="already initialized"):
+            await c.attach()
+        await c.shutdown()
+        await mgr.destroy()
+
+    @pytest.mark.asyncio
+    async def test_attach_restores_active_handles_only(
+        self, isolated_home: Path, mock_pm: ProcessManager
+    ) -> None:
+        """attach 仅恢复 is_active=True 的非 TL 成员。"""
+        from cc_team._serialization import now_ms
+        from cc_team.team_manager import TeamManager
+        from cc_team.types import TeamMember
+
+        mgr = TeamManager("test-team")
+        await mgr.create(lead_session_id="s1")
+        # 添加 active agent
+        await mgr.add_member(TeamMember(
+            agent_id="a@test-team", name="active-agent",
+            agent_type="general-purpose", model="claude-sonnet-4-6",
+            joined_at=now_ms(), tmux_pane_id="%10", cwd="/tmp",
+            color="blue", is_active=True, backend_type="tmux",
+        ))
+        # 添加 inactive agent
+        await mgr.add_member(TeamMember(
+            agent_id="i@test-team", name="inactive-agent",
+            agent_type="general-purpose", model="claude-sonnet-4-6",
+            joined_at=now_ms(), tmux_pane_id="%11", cwd="/tmp",
+            color="green", is_active=False, backend_type="tmux",
+        ))
+
+        c = Controller(
+            ControllerOptions(team_name="test-team"),
+            process_manager=mock_pm,
+        )
+        await c.attach()
+        assert "active-agent" in c.list_agents()
+        assert "inactive-agent" not in c.list_agents()
+        await c.shutdown()
+        await mgr.destroy()
+
+
+# ── Shutdown 条件 Destroy ──────────────────────────────────
+
+
+class TestShutdownConditionalDestroy:
+    """shutdown 条件销毁测试。"""
+
+    @pytest.mark.asyncio
+    async def test_init_shutdown_destroys_team(self, ctrl: Controller) -> None:
+        """init() 后 shutdown 应销毁团队。"""
+        await ctrl.init()
+        await ctrl.shutdown()
+        assert ctrl.team_manager.read() is None
+
+    @pytest.mark.asyncio
+    async def test_attach_shutdown_preserves_team(
+        self, isolated_home: Path, mock_pm: ProcessManager
+    ) -> None:
+        """attach() 后 shutdown 不应销毁团队。"""
+        from cc_team.team_manager import TeamManager
+        mgr = TeamManager("test-team")
+        await mgr.create(lead_session_id="s1")
+
+        c = Controller(
+            ControllerOptions(team_name="test-team"),
+            process_manager=mock_pm,
+        )
+        await c.attach()
+        await c.shutdown()
+        assert mgr.read() is not None
+        await mgr.destroy()
+
+
+# ── Relay [R2] ──────────────────────────────────────────────
+
+
+class TestRelay:
+    """relay() 测试。"""
+
+    @pytest.mark.asyncio
+    async def test_relay_rotates_session(self, ctrl: Controller) -> None:
+        """relay 应轮转 session ID。"""
+        await ctrl.init()
+        old_sid = ctrl.session_id
+        new_sid = await ctrl.relay()
+        assert new_sid != old_sid
+        assert ctrl.session_id == new_sid
+        # config 中也更新了
+        config = ctrl.team_manager.read()
+        assert config is not None
+        assert config.lead_session_id == new_sid
+        await ctrl.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_relay_before_init_raises(self, ctrl: Controller) -> None:
+        """未初始化时 relay 抛出 NotInitializedError。"""
+        with pytest.raises(NotInitializedError):
+            await ctrl.relay()

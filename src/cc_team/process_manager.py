@@ -19,7 +19,10 @@ import shutil
 
 from cc_team.exceptions import AgentNotFoundError, SpawnError, TmuxError
 from cc_team.tmux import TmuxManager
-from cc_team.types import PermissionMode, SpawnAgentOptions
+from cc_team.types import TEAM_LEAD_AGENT_TYPE, PermissionMode, SpawnAgentOptions, SpawnLeadOptions
+
+# 团队协议激活必需的环境变量前缀
+_ENV_PREFIX = "CLAUDECODE=1 CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 "
 
 
 class ProcessManager:
@@ -74,21 +77,9 @@ class ProcessManager:
             color=color,
             parent_session_id=parent_session_id,
         )
-        # cd into agent cwd before launching — matches vendor spawn behavior.
-        agent_cwd = shlex.quote(options.cwd or os.getcwd())
-        command = (
-            f"cd {agent_cwd} && "
-            "CLAUDECODE=1 CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 "
-            + shlex.join(cli_args)
-        )
+        command = _build_spawn_command(options.cwd, cli_args)
 
-        try:
-            await self._tmux.send_command(pane_id, command)
-        except TmuxError as e:
-            # 清理已创建的 pane
-            with contextlib.suppress(TmuxError):
-                await self._tmux.kill_pane(pane_id)
-            raise SpawnError(f"Failed to send command to pane: {e}") from e
+        await self._send_to_pane(pane_id, command, owned_pane=True)
 
         self._panes[options.name] = pane_id
         return pane_id
@@ -194,6 +185,109 @@ class ProcessManager:
                 args.extend(["--disallowedTools", tool])
 
         return args
+
+    @staticmethod
+    def build_lead_cli_args(
+        options: SpawnLeadOptions,
+        *,
+        parent_session_id: str,
+    ) -> list[str]:
+        """构建 Team Lead CLI 启动参数。
+
+        与 build_cli_args 的区别:
+        - 有 --session-id（TL 独有）
+        - 无 --agent-color（TL 不需要颜色）
+        - agent-type 固定 "team-lead"
+
+        Returns:
+            命令行参数列表
+        """
+        claude_path = _find_claude_binary()
+
+        tl = TEAM_LEAD_AGENT_TYPE
+        args = [
+            claude_path,
+            "--agent-id", f"{tl}@{options.team_name}",
+            "--agent-name", tl,
+            "--team-name", options.team_name,
+            "--parent-session-id", parent_session_id,
+            "--agent-type", tl,
+            "--model", options.model,
+            "--session-id", options.session_id,
+        ]
+
+        if options.permission_mode is not None:
+            _add_permission_args(args, options.permission_mode)
+
+        return args
+
+    async def spawn_lead(
+        self,
+        options: SpawnLeadOptions,
+        *,
+        parent_session_id: str,
+    ) -> str:
+        """在 tmux 中启动 Team Lead 进程。
+
+        支持复用已有 pane（relay 场景）或自动 split_window。
+
+        Args:
+            options: TL 配置
+            parent_session_id: 父级 session ID（通常等于 options.session_id）
+
+        Returns:
+            tmux pane ID
+
+        Raises:
+            SpawnError: 启动失败
+        """
+        # 获取或创建 pane
+        if options.pane_id:
+            pane_id = options.pane_id
+            # 验证 pane 存活
+            if not await self._tmux.is_pane_alive(pane_id):
+                raise SpawnError(f"Pane {pane_id} is not alive, cannot reuse")
+        else:
+            try:
+                pane_id = await self._tmux.split_window()
+            except TmuxError as e:
+                raise SpawnError(f"Failed to create tmux pane: {e}") from e
+
+        # 构建并发送命令
+        cli_args = self.build_lead_cli_args(
+            options,
+            parent_session_id=parent_session_id,
+        )
+        command = _build_spawn_command(options.cwd, cli_args)
+
+        await self._send_to_pane(pane_id, command, owned_pane=not options.pane_id)
+
+        self._panes[TEAM_LEAD_AGENT_TYPE] = pane_id
+        return pane_id
+
+    async def _send_to_pane(
+        self, pane_id: str, command: str, *, owned_pane: bool
+    ) -> None:
+        """发送命令到 pane，失败时按所有权清理。
+
+        Args:
+            pane_id: 目标 pane
+            command: 要发送的命令
+            owned_pane: 如果为 True，send 失败时 kill 该 pane
+        """
+        try:
+            await self._tmux.send_command(pane_id, command)
+        except TmuxError as e:
+            if owned_pane:
+                with contextlib.suppress(TmuxError):
+                    await self._tmux.kill_pane(pane_id)
+            raise SpawnError(f"Failed to send command to pane: {e}") from e
+
+
+def _build_spawn_command(cwd: str, cli_args: list[str]) -> str:
+    """构建 cd + env vars + CLI 命令字符串。"""
+    agent_cwd = shlex.quote(cwd or os.getcwd())
+    return f"cd {agent_cwd} && {_ENV_PREFIX}" + shlex.join(cli_args)
 
 
 def _find_claude_binary() -> str:
