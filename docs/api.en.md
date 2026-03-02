@@ -37,7 +37,7 @@ Controller(
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `options` | `ControllerOptions` | Team name, description, model, cwd, session_id |
-| `process_manager` | `ProcessManager \| None` | Optional custom PM instance (for testing) |
+| `process_manager` | `AgentBackend \| None` | Optional custom backend instance (for testing/DI) |
 
 ### Properties
 
@@ -47,7 +47,7 @@ Controller(
 | `session_id` | `str` | Lead agent session UUID |
 | `team_manager` | `TeamManager` | Access to team config manager |
 | `task_manager` | `TaskManager` | Access to task manager |
-| `process_manager` | `ProcessManager` | Access to process manager |
+| `process_manager` | `AgentBackend` | Access to process manager (AgentBackend protocol) |
 
 ### Methods
 
@@ -68,6 +68,35 @@ Shut down the controller: stop polling, kill all agents, destroy team.
 
 ```python
 await ctrl.shutdown()
+```
+
+#### `async attach() -> None`
+
+Attach to an existing team (without creating a new one). Used for takeover scenarios: connects to an existing team, recovers agent handles by verifying pane liveness via `sync_agents()`, and starts inbox polling.
+
+```python
+ctrl = Controller(ControllerOptions(team_name="existing-team"))
+await ctrl.attach()
+```
+
+#### `async relay() -> str`
+
+Context relay: rotate session ID, broadcast `session_relay` to all active agents, restart poller. Returns the new session ID. The caller is responsible for stopping/restarting the TL process.
+
+```python
+new_session_id = await ctrl.relay()
+```
+
+#### `async sync_agents() -> list[AgentHandle]`
+
+Discover and recover/cleanup agent connections. For each non-TL active member with a pane_id in config.json:
+- Alive pane → track in ProcessManager + create AgentHandle
+- Dead pane → mark `is_active=False` in config
+
+Returns the list of recovered AgentHandles. Called automatically during `attach()`.
+
+```python
+recovered = await ctrl.sync_agents()
 ```
 
 #### `async spawn(options: SpawnAgentOptions) -> AgentHandle`
@@ -144,6 +173,7 @@ List all tasks.
 | `permission:request` | `(agent_name: str, msg: PermissionRequestMessage)` | Agent requests permission |
 | `task:completed` | `(task: TaskFile)` | Task completed |
 | `agent:spawned` | `(agent_name: str, pane_id: str)` | Agent process started |
+| `session:relayed` | `(new_session_id: str)` | Session rotated via relay |
 | `agent:exited` | `(agent_name: str, exit_code: int)` | Agent process exited |
 | `error` | `(exc: Exception)` | Error occurred |
 
@@ -236,13 +266,25 @@ Find a member by name.
 
 Return all team members.
 
+#### `list_teammates() -> list[TeamMember]`
+
+Return members excluding team-lead.
+
 #### `async add_member(member: TeamMember) -> None`
 
 Add a member. Raises `ValueError` on duplicate name.
 
-#### `next_color() -> str`
+#### `async register_member(*, name: str, agent_type: str = "general-purpose", model: str = "claude-sonnet-4-6", cwd: str = "", plan_mode_required: bool = False, backend_type: BackendType | None = None) -> TeamMember`
 
-Allocate the next color (8-color cycling based on member count).
+Register a member to config.json + create an empty inbox, without starting a process. Color allocation and member insertion are atomic (single lock). Returns the registered `TeamMember` with `is_active=False`.
+
+```python
+member = await mgr.register_member(name="worker", backend_type="tmux")
+```
+
+#### `next_color(config: TeamConfig | None = None) -> AgentColor`
+
+Allocate the next color (8-color cycling based on member count). Pass an existing config to avoid redundant I/O.
 
 #### `async remove_member(name: str) -> None`
 
@@ -251,6 +293,22 @@ Remove a member. Raises `AgentNotFoundError` if not found.
 #### `async update_member(name: str, **updates) -> TeamMember`
 
 Update member fields. Raises `AgentNotFoundError` if not found.
+
+#### `get_lead_session_id() -> str | None`
+
+Get the current team lead session ID. Returns `None` if config not found.
+
+#### `async set_lead_session_id(session_id: str) -> None`
+
+Set the team lead session ID.
+
+#### `async rotate_session(new_session_id: str | None = None) -> str`
+
+Rotate the lead session ID. Generates a new UUID4 (or uses the provided ID). Returns the new session ID.
+
+```python
+new_sid = await mgr.rotate_session()
+```
 
 #### `async destroy() -> None`
 
@@ -335,6 +393,10 @@ InboxIO(team_name: str, agent_name: str)
 | `inbox_path` | `Path` | Path to inbox JSON file |
 
 ### Methods
+
+#### `async ensure_exists() -> None`
+
+Create an empty inbox file if it doesn't exist. Used by `register_member()` to pre-create the inbox without writing a message.
 
 #### `async write(message: InboxMessage) -> None`
 
@@ -469,6 +531,10 @@ Send a task assignment notification.
 
 Send a plan approval/rejection response.
 
+#### `async send_session_relay(recipients: list[str], *, new_session_id: str, previous_session_id: str) -> None`
+
+Broadcast a `session_relay` structured message to multiple agents in parallel. Used by `Controller.relay()`.
+
 #### `async broadcast(content: str, recipients: list[str], *, summary: str | None = None, from_name: str | None = None) -> None`
 
 Broadcast a message to multiple agents.
@@ -547,6 +613,18 @@ ProcessManager(*, tmux: TmuxManager | None = None)
 
 Start a Claude agent in a tmux pane. Returns the pane ID.
 
+#### `async spawn_lead(options: SpawnLeadOptions, *, parent_session_id: str) -> str`
+
+Start a Team Lead process in a tmux pane. Supports pane reuse (`options.pane_id`) for relay scenarios. Returns the pane ID.
+
+#### `track(agent_name: str, pane_id: str) -> None`
+
+Register an existing agent into the tracking list (used for attach/sync scenarios).
+
+#### `async send_input(agent_name: str, text: str) -> None`
+
+Send input text to an agent's tmux pane. Raises `AgentNotFoundError` if not tracked.
+
 #### `async kill(agent_name: str) -> None`
 
 Force-kill an agent. Raises `AgentNotFoundError` if not tracked.
@@ -569,7 +647,11 @@ Return all tracked agent names.
 
 #### `@staticmethod build_cli_args(options: SpawnAgentOptions, *, team_name: str, color: str, parent_session_id: str) -> list[str]`
 
-Build Claude CLI startup arguments. Uses `shlex.join` for safe command construction.
+Build Claude CLI startup arguments for agents. Uses `shlex.join` for safe command construction.
+
+#### `@staticmethod build_lead_cli_args(options: SpawnLeadOptions, *, parent_session_id: str) -> list[str]`
+
+Build Claude CLI startup arguments for Team Lead. Includes `--session-id`, no `--agent-color`.
 
 ---
 
@@ -583,9 +665,11 @@ from cc_team import (
     TaskStatus,       # "pending" | "in_progress" | "completed" | "deleted"
     PermissionMode,   # "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk" | "delegate"
     AgentType,        # "general-purpose" | "Explore" | "Plan" | "Bash" | "team-lead"
-    BackendType,      # "tmux" | "in-process"
+    BackendType,      # "tmux" | "in-process" | "agent-sdk"
+    TMUX_BACKEND,     # BackendType constant: "tmux"
     AgentColor,       # "blue" | "green" | "yellow" | "purple" | "orange" | "pink" | "cyan" | "red"
     AGENT_COLORS,     # 8-color tuple for cycling assignment
+    MessageType,      # Literal union of all structured message type strings
 
     # Dataclasses
     TeamConfig,       # Team config.json top-level structure
@@ -593,10 +677,23 @@ from cc_team import (
     InboxMessage,     # Single inbox message (from_, text, timestamp, read, summary?, color?)
     TaskFile,         # Task file (id, subject, description, status, owner, blocks, blocked_by, ...)
     SpawnAgentOptions,# Spawn configuration (name, prompt, agent_type, model, ...)
+    SpawnLeadOptions, # TL spawn configuration (team_name, session_id, model, pane_id?)
     ControllerOptions,# Controller initialization options
 
-    # Protocol interface
+    # Structured message bodies
+    SessionRelayMessage,        # session_relay (from_, new_session_id, previous_session_id)
+    TaskAssignmentMessage,      # task_assignment
+    ShutdownRequestMessage,     # shutdown_request
+    ShutdownApprovedMessage,    # shutdown_approved
+    PlanApprovalRequestMessage, # plan_approval_request
+    PlanApprovalResponseMessage,# plan_approval_response
+    PermissionRequestMessage,   # permission_request
+    PermissionResponseMessage,  # permission_response
+    IdleNotificationMessage,    # idle_notification
+
+    # Protocol interfaces
     AgentController,  # DI interface between AgentHandle and Controller
+    AgentBackend,     # Backend abstraction for process lifecycle (tmux, SDK, etc.)
 )
 ```
 
@@ -613,6 +710,19 @@ class SpawnAgentOptions:
     permission_mode: PermissionMode | None = None
     allowed_tools: list[str] | None = None
     disallowed_tools: list[str] | None = None
+```
+
+### SpawnLeadOptions
+
+```python
+@dataclass
+class SpawnLeadOptions:
+    team_name: str              # Team name
+    session_id: str             # Lead session UUID
+    model: str = "claude-sonnet-4-6"  # LLM model ID
+    cwd: str = ""               # Working directory (default: os.getcwd())
+    permission_mode: PermissionMode | None = None
+    pane_id: str | None = None  # Reuse existing pane (relay scenario)
 ```
 
 ### ControllerOptions
@@ -679,6 +789,33 @@ class TaskFile:
     metadata: dict = {}
 ```
 
+### SessionRelayMessage
+
+```python
+@dataclass
+class SessionRelayMessage:
+    from_: str                  # Sender (JSON: "from")
+    new_session_id: str         # New session ID (JSON: newSessionId)
+    previous_session_id: str    # Old session ID (JSON: previousSessionId)
+    timestamp: str              # ISO 8601
+```
+
+### AgentBackend (Protocol)
+
+Backend abstraction for agent process lifecycle. Implementations: `ProcessManager` (tmux), future SDK backends.
+
+```python
+@runtime_checkable
+class AgentBackend(Protocol):
+    async def spawn(self, options: SpawnAgentOptions, *, team_name: str, color: str, parent_session_id: str) -> str: ...
+    async def kill(self, agent_name: str) -> None: ...
+    def untrack(self, agent_name: str) -> None: ...
+    async def is_running(self, agent_name: str) -> bool: ...
+    def track(self, agent_name: str, pane_id: str) -> None: ...
+    def tracked_agents(self) -> list[str]: ...
+    async def send_input(self, agent_name: str, text: str) -> None: ...
+```
+
 ---
 
 ## Exceptions
@@ -696,6 +833,7 @@ from cc_team import (
     SpawnError,             # Agent spawn process failed
     ProtocolError,          # Protocol format error (JSON parse failure, missing fields)
     CyclicDependencyError,  # Cyclic task dependency (has .task_id, .blocked_by attributes)
+    TeamAlreadyExistsError, # Team already exists (raised by TeamManager.create)
 )
 ```
 
@@ -711,7 +849,8 @@ Exception
     ├── TmuxError
     ├── SpawnError
     ├── ProtocolError
-    └── CyclicDependencyError
+    ├── CyclicDependencyError
+    └── TeamAlreadyExistsError
 ```
 
 ### Notable Attributes

@@ -7,7 +7,7 @@ AI agents (e.g. via ``cct skill``).
 
 from __future__ import annotations
 
-SKILL_DOC_VERSION: str = "0.1.0"
+SKILL_DOC_VERSION: str = "0.2.0"
 
 SKILL_SECTIONS: list[dict[str, str]] = [
     {
@@ -35,12 +35,27 @@ SKILL_SECTIONS: list[dict[str, str]] = [
             "cct --team-name <t> team info\n"
             "  Show team info (members, description).\n\n"
             "cct --team-name <t> team destroy\n"
-            "  Destroy a team and all associated resources."
+            "  Destroy a team and all associated resources.\n\n"
+            "cct --team-name <t> team takeover [--model <m>] [--pane-id <p>] [--force]\n"
+            "  Takeover team lead: rotate session + spawn new TL process.\n"
+            "  Use --force to override a still-running TL. --pane-id reuses an existing pane.\n\n"
+            "cct --team-name <t> team relay [--model <m>]\n"
+            "  Context relay: gracefully stop old TL (/exit), rotate session, spawn new TL.\n"
+            "  Waits up to 30s for old TL to exit.\n\n"
+            "cct --team-name <t> team session [--rotate] [--set <id>]\n"
+            "  Query or manage the lead session ID.\n"
+            "  No flags: print current session ID.\n"
+            "  --rotate: generate a new UUID session ID.\n"
+            "  --set <id>: set a specific session ID."
         ),
     },
     {
         "title": "Agent Commands",
         "content": (
+            "cct --team-name <t> agent register --name <n> [--type <type>] [--model <model>]\n"
+            "  Register an agent in config.json without starting a process.\n"
+            "  Creates an empty inbox. The agent is marked inactive (is_active=False).\n"
+            "  Useful for external systems that manage their own processes.\n\n"
             "cct --team-name <t> agent spawn --name <n> --prompt <p> "
             "[--type <type>] [--model <model>]\n"
             "  Spawn a new agent. Registers member, writes initial prompt, "
@@ -51,6 +66,9 @@ SKILL_SECTIONS: list[dict[str, str]] = [
             "  Show detailed status of a specific agent.\n\n"
             "cct --team-name <t> agent shutdown --name <n> [--reason <r>]\n"
             "  Send a graceful shutdown request to an agent.\n\n"
+            "cct --team-name <t> agent sync\n"
+            "  Verify pane liveness for all active agents.\n"
+            "  Alive agents are marked as synced; dead agents are marked inactive.\n\n"
             "cct --team-name <t> agent kill --name <n>\n"
             "  Force kill an agent process and remove from team."
         ),
@@ -119,7 +137,16 @@ SKILL_SECTIONS: list[dict[str, str]] = [
             "--content 'Start on task #1'\n\n"
             "6. Cleanup:\n"
             "   cct --team-name proj agent shutdown --name researcher\n"
-            "   cct --team-name proj team destroy"
+            "   cct --team-name proj team destroy\n\n"
+            "--- Session Management ---\n\n"
+            "7. Takeover (new TL replaces old):\n"
+            "   cct --team-name proj team takeover --force\n\n"
+            "8. Context relay (graceful TL rotation):\n"
+            "   cct --team-name proj team relay\n\n"
+            "9. Register external agent (no process):\n"
+            "   cct --team-name proj agent register --name external-bot\n\n"
+            "10. Sync agent liveness:\n"
+            "   cct --team-name proj agent sync"
         ),
     },
     {
@@ -134,7 +161,13 @@ SKILL_SECTIONS: list[dict[str, str]] = [
             "- Message read defaults to team-lead inbox; use --agent to "
             "read another agent's inbox.\n"
             "- All data is stored under ~/.claude/ as JSON files "
-            "(no database required)."
+            "(no database required).\n"
+            "- Use 'agent register' to pre-register members managed by "
+            "external systems (SDK, custom backends).\n"
+            "- Use 'agent sync' after a crash to reconcile config with "
+            "actual pane liveness.\n"
+            "- 'team relay' is the recommended way to rotate context — "
+            "it gracefully stops the old TL before spawning a new one."
         ),
     },
     {

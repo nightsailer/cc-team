@@ -37,7 +37,7 @@ Controller(
 | 参数 | 类型 | 说明 |
 |------|------|------|
 | `options` | `ControllerOptions` | 团队名称、描述、模型、工作目录、会话 ID |
-| `process_manager` | `ProcessManager \| None` | 可选的自定义进程管理器实例（用于测试） |
+| `process_manager` | `AgentBackend \| None` | 可选的自定义后端实例（用于测试/DI） |
 
 ### 属性
 
@@ -47,7 +47,7 @@ Controller(
 | `session_id` | `str` | 主智能体会话 UUID |
 | `team_manager` | `TeamManager` | 团队配置管理器 |
 | `task_manager` | `TaskManager` | 任务管理器 |
-| `process_manager` | `ProcessManager` | 进程管理器 |
+| `process_manager` | `AgentBackend` | 进程管理器（AgentBackend 协议） |
 
 ### 方法
 
@@ -68,6 +68,35 @@ await ctrl.init()
 
 ```python
 await ctrl.shutdown()
+```
+
+#### `async attach() -> None`
+
+连接到已有团队（不创建新团队）。用于接管场景：通过 `sync_agents()` 验证 pane 存活状态并恢复 Agent Handle，然后启动收件箱轮询。
+
+```python
+ctrl = Controller(ControllerOptions(team_name="existing-team"))
+await ctrl.attach()
+```
+
+#### `async relay() -> str`
+
+上下文中继：轮转会话 ID，向所有活跃智能体广播 `session_relay`，重启轮询器。返回新的会话 ID。调用方负责停止/重启 TL 进程。
+
+```python
+new_session_id = await ctrl.relay()
+```
+
+#### `async sync_agents() -> list[AgentHandle]`
+
+发现并恢复/清理智能体连接。对 config.json 中每个非 TL 的活跃成员：
+- Pane 存活 → 注册到 ProcessManager + 创建 AgentHandle
+- Pane 已死 → 标记 `is_active=False`
+
+返回已恢复的 AgentHandle 列表。在 `attach()` 中自动调用。
+
+```python
+recovered = await ctrl.sync_agents()
 ```
 
 #### `async spawn(options: SpawnAgentOptions) -> AgentHandle`
@@ -144,6 +173,7 @@ handle = await ctrl.spawn(SpawnAgentOptions(
 | `permission:request` | `(agent_name: str, msg: PermissionRequestMessage)` | 智能体请求权限 |
 | `task:completed` | `(task: TaskFile)` | 任务已完成 |
 | `agent:spawned` | `(agent_name: str, pane_id: str)` | 智能体进程已启动 |
+| `session:relayed` | `(new_session_id: str)` | 会话通过 relay 轮转 |
 | `agent:exited` | `(agent_name: str, exit_code: int)` | 智能体进程已退出 |
 | `error` | `(exc: Exception)` | 发生错误 |
 
@@ -236,13 +266,25 @@ TeamManager(team_name: str)
 
 返回所有团队成员。
 
+#### `list_teammates() -> list[TeamMember]`
+
+返回除 team-lead 外的成员列表。
+
 #### `async add_member(member: TeamMember) -> None`
 
 添加成员。名称重复时抛出 `ValueError`。
 
-#### `next_color() -> str`
+#### `async register_member(*, name: str, agent_type: str = "general-purpose", model: str = "claude-sonnet-4-6", cwd: str = "", plan_mode_required: bool = False, backend_type: BackendType | None = None) -> TeamMember`
 
-分配下一个颜色（基于成员数量的 8 色循环）。
+注册成员到 config.json + 创建空 inbox，不启动进程。颜色分配和成员插入在单次锁操作中完成。返回 `is_active=False` 的 `TeamMember`。
+
+```python
+member = await mgr.register_member(name="worker", backend_type="tmux")
+```
+
+#### `next_color(config: TeamConfig | None = None) -> AgentColor`
+
+分配下一个颜色（基于成员数量的 8 色循环）。传入已有 config 可避免重复 I/O。
 
 #### `async remove_member(name: str) -> None`
 
@@ -251,6 +293,22 @@ TeamManager(team_name: str)
 #### `async update_member(name: str, **updates) -> TeamMember`
 
 更新成员字段。未找到时抛出 `AgentNotFoundError`。
+
+#### `get_lead_session_id() -> str | None`
+
+获取当前 Team Lead 的会话 ID。配置不存在时返回 `None`。
+
+#### `async set_lead_session_id(session_id: str) -> None`
+
+设置 Team Lead 的会话 ID。
+
+#### `async rotate_session(new_session_id: str | None = None) -> str`
+
+轮转 Lead 会话 ID。自动生成新 UUID4（或使用指定 ID）。返回新的会话 ID。
+
+```python
+new_sid = await mgr.rotate_session()
+```
 
 #### `async destroy() -> None`
 
@@ -335,6 +393,10 @@ InboxIO(team_name: str, agent_name: str)
 | `inbox_path` | `Path` | 收件箱 JSON 文件路径 |
 
 ### 方法
+
+#### `async ensure_exists() -> None`
+
+创建空收件箱文件（若不存在）。由 `register_member()` 调用，用于预创建 inbox 而不写入消息。
 
 #### `async write(message: InboxMessage) -> None`
 
@@ -469,6 +531,10 @@ MessageBuilder(team_name: str, lead_name: str = "team-lead")
 
 发送计划审批/拒绝响应。
 
+#### `async send_session_relay(recipients: list[str], *, new_session_id: str, previous_session_id: str) -> None`
+
+并行广播 `session_relay` 结构化消息到多个智能体。由 `Controller.relay()` 调用。
+
 #### `async broadcast(content: str, recipients: list[str], *, summary: str | None = None, from_name: str | None = None) -> None`
 
 向多个智能体广播消息。
@@ -547,6 +613,18 @@ ProcessManager(*, tmux: TmuxManager | None = None)
 
 在 tmux pane 中启动 Claude 智能体。返回 pane ID。
 
+#### `async spawn_lead(options: SpawnLeadOptions, *, parent_session_id: str) -> str`
+
+在 tmux 中启动 Team Lead 进程。支持 pane 复用（`options.pane_id`）用于 relay 场景。返回 pane ID。
+
+#### `track(agent_name: str, pane_id: str) -> None`
+
+注册已有智能体到跟踪列表（用于 attach/sync 场景）。
+
+#### `async send_input(agent_name: str, text: str) -> None`
+
+向智能体的 tmux pane 发送输入文本。未被跟踪时抛出 `AgentNotFoundError`。
+
 #### `async kill(agent_name: str) -> None`
 
 强制终止智能体。未被跟踪时抛出 `AgentNotFoundError`。
@@ -569,7 +647,11 @@ ProcessManager(*, tmux: TmuxManager | None = None)
 
 #### `@staticmethod build_cli_args(options: SpawnAgentOptions, *, team_name: str, color: str, parent_session_id: str) -> list[str]`
 
-构建 Claude CLI 启动参数。使用 `shlex.join` 确保命令构造安全。
+构建 Agent 的 Claude CLI 启动参数。使用 `shlex.join` 确保命令构造安全。
+
+#### `@staticmethod build_lead_cli_args(options: SpawnLeadOptions, *, parent_session_id: str) -> list[str]`
+
+构建 Team Lead 的 Claude CLI 启动参数。包含 `--session-id`，无 `--agent-color`。
 
 ---
 
@@ -583,9 +665,11 @@ from cc_team import (
     TaskStatus,       # "pending" | "in_progress" | "completed" | "deleted"
     PermissionMode,   # "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk" | "delegate"
     AgentType,        # "general-purpose" | "Explore" | "Plan" | "Bash" | "team-lead"
-    BackendType,      # "tmux" | "in-process"
+    BackendType,      # "tmux" | "in-process" | "agent-sdk"
+    TMUX_BACKEND,     # BackendType 常量: "tmux"
     AgentColor,       # "blue" | "green" | "yellow" | "purple" | "orange" | "pink" | "cyan" | "red"
     AGENT_COLORS,     # 8 色元组，用于循环分配
+    MessageType,      # 所有结构化消息类型字符串的 Literal 联合
 
     # Dataclass
     TeamConfig,       # 团队 config.json 顶层结构
@@ -593,10 +677,23 @@ from cc_team import (
     InboxMessage,     # 单条收件箱消息（from_, text, timestamp, read, summary?, color?）
     TaskFile,         # 任务文件（id, subject, description, status, owner, blocks, blocked_by, ...）
     SpawnAgentOptions,# 派生配置（name, prompt, agent_type, model, ...）
+    SpawnLeadOptions, # TL 派生配置（team_name, session_id, model, pane_id?）
     ControllerOptions,# Controller 初始化选项
+
+    # 结构化消息体
+    SessionRelayMessage,        # session_relay（from_, new_session_id, previous_session_id）
+    TaskAssignmentMessage,      # task_assignment
+    ShutdownRequestMessage,     # shutdown_request
+    ShutdownApprovedMessage,    # shutdown_approved
+    PlanApprovalRequestMessage, # plan_approval_request
+    PlanApprovalResponseMessage,# plan_approval_response
+    PermissionRequestMessage,   # permission_request
+    PermissionResponseMessage,  # permission_response
+    IdleNotificationMessage,    # idle_notification
 
     # 协议接口
     AgentController,  # AgentHandle 与 Controller 之间的依赖注入接口
+    AgentBackend,     # 进程生命周期的后端抽象（tmux、SDK 等）
 )
 ```
 
@@ -613,6 +710,19 @@ class SpawnAgentOptions:
     permission_mode: PermissionMode | None = None
     allowed_tools: list[str] | None = None
     disallowed_tools: list[str] | None = None
+```
+
+### SpawnLeadOptions
+
+```python
+@dataclass
+class SpawnLeadOptions:
+    team_name: str              # 团队名称
+    session_id: str             # Lead 会话 UUID
+    model: str = "claude-sonnet-4-6"  # LLM 模型 ID
+    cwd: str = ""               # 工作目录（默认: os.getcwd()）
+    permission_mode: PermissionMode | None = None
+    pane_id: str | None = None  # 复用已有 pane（relay 场景）
 ```
 
 ### ControllerOptions
@@ -679,6 +789,33 @@ class TaskFile:
     metadata: dict = {}
 ```
 
+### SessionRelayMessage
+
+```python
+@dataclass
+class SessionRelayMessage:
+    from_: str                  # 发送方（JSON: "from"）
+    new_session_id: str         # 新会话 ID（JSON: newSessionId）
+    previous_session_id: str    # 旧会话 ID（JSON: previousSessionId）
+    timestamp: str              # ISO 8601
+```
+
+### AgentBackend（Protocol）
+
+智能体进程生命周期的后端抽象。实现：`ProcessManager`（tmux），未来 SDK 后端。
+
+```python
+@runtime_checkable
+class AgentBackend(Protocol):
+    async def spawn(self, options: SpawnAgentOptions, *, team_name: str, color: str, parent_session_id: str) -> str: ...
+    async def kill(self, agent_name: str) -> None: ...
+    def untrack(self, agent_name: str) -> None: ...
+    async def is_running(self, agent_name: str) -> bool: ...
+    def track(self, agent_name: str, pane_id: str) -> None: ...
+    def tracked_agents(self) -> list[str]: ...
+    async def send_input(self, agent_name: str, text: str) -> None: ...
+```
+
 ---
 
 ## 异常
@@ -696,6 +833,7 @@ from cc_team import (
     SpawnError,             # 智能体派生过程失败
     ProtocolError,          # 协议格式错误（JSON 解析失败、缺少字段）
     CyclicDependencyError,  # 循环任务依赖（包含 .task_id、.blocked_by 属性）
+    TeamAlreadyExistsError, # 团队已存在（由 TeamManager.create 抛出）
 )
 ```
 
@@ -711,7 +849,8 @@ Exception
     ├── TmuxError
     ├── SpawnError
     ├── ProtocolError
-    └── CyclicDependencyError
+    ├── CyclicDependencyError
+    └── TeamAlreadyExistsError
 ```
 
 ### 重要属性
