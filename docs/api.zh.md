@@ -87,16 +87,18 @@ await ctrl.attach()
 new_session_id = await ctrl.relay()
 ```
 
-#### `async sync_agents() -> list[AgentHandle]`
+#### `async sync_agents() -> tuple[list[AgentHandle], list[str]]`
 
-发现并恢复/清理智能体连接。对 config.json 中每个非 TL 的活跃成员：
-- Pane 存活 → 注册到 ProcessManager + 创建 AgentHandle
-- Pane 已死 → 标记 `is_active=False`
+双向 Agent 状态同步。对 config.json 中每个有 backend_id 的非 TL 成员：
+- 存活 + isActive=false → **恢复**：设置 isActive=true，注册 handle
+- 存活 + isActive=true → 正常同步，注册 handle
+- 死亡 + isActive=true → 标记 isActive=false
+- 死亡 + isActive=false → 跳过（避免冗余写入）
 
-返回已恢复的 AgentHandle 列表。在 `attach()` 中自动调用。
+返回 `(synced_handles, recovered_names)`。在 `attach()` 中自动调用。
 
 ```python
-recovered = await ctrl.sync_agents()
+synced, recovered = await ctrl.sync_agents()
 ```
 
 #### `async spawn(options: SpawnAgentOptions) -> AgentHandle`
@@ -815,6 +817,51 @@ class AgentBackend(Protocol):
     def tracked_agents(self) -> list[str]: ...
     async def send_input(self, agent_name: str, text: str) -> None: ...
 ```
+
+---
+
+## CLI 参考（会话管理）
+
+### `cct team relay`
+
+Team Lead 上下文接力：退出旧 TL，轮转会话，启动新 TL，自动恢复 Agent 状态。
+
+```bash
+cct --team-name <name> team relay [--model <model>] [--timeout <seconds>]
+```
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--model` | `claude-sonnet-4-6` | 新 TL 的模型 |
+| `--timeout` | `30` | 退出等待超时（秒） |
+
+**输出**（JSON）：`old_session`, `new_session`, `old_backend_id`, `new_backend_id`, `agents.synced`, `agents.recovered`, `agents.inactive`
+
+### `cct agent relay`
+
+Teammate 上下文接力：退出旧进程，使用全新上下文重新启动。
+
+```bash
+cct --team-name <name> agent relay --name <agent> [--prompt <new-prompt>] [--timeout <seconds>]
+```
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--name` | （必填） | Agent 名称 |
+| `--prompt` | （沿用原始） | Agent 的新 prompt |
+| `--timeout` | `30` | 退出等待超时（秒） |
+
+**输出**（JSON）：`name`, `old_backend_id`, `new_backend_id`, `prompt`, `color`
+
+### `cct agent sync`
+
+双向 Agent 状态同步：验证进程存活状态，恢复不活跃但存活的 Agent，标记已死亡的 Agent。
+
+```bash
+cct --team-name <name> agent sync
+```
+
+**输出**（JSON）：`synced`, `recovered`, `inactive`
 
 ---
 

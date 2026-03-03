@@ -197,32 +197,52 @@ async def _cmd_team_takeover(args: argparse.Namespace) -> None:
         print(f"Takeover complete: backend={backend_id}, session={new_sid}")
 
 
-async def _cmd_team_relay(args: argparse.Namespace) -> None:
+async def _graceful_exit_pane(pane_id: str, timeout: int, label: str = "pane") -> None:
+    """Send /exit and poll until the pane dies, or exit(1) on timeout."""
     from cc_team.tmux import TmuxManager
+
+    tmux = TmuxManager()
+    if not await tmux.is_pane_alive(pane_id):
+        return
+    await tmux.send_command(pane_id, "/exit")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not await tmux.is_pane_alive(pane_id):
+            return
+        await asyncio.sleep(1)
+    _error(f"{label} {pane_id} did not exit within {timeout}s")
+    sys.exit(1)
+
+
+async def _cmd_team_relay(args: argparse.Namespace) -> None:
+    from cc_team._sync import sync_member_states
+    from cc_team.process_manager import ProcessManager
     from cc_team.types import TEAM_LEAD_AGENT_TYPE
 
     name = _require_team(args)
     mgr, config = await _require_config(name)
     old_session = config.lead_session_id
 
-    # Get old TL's backend_id and attempt graceful exit
+    # Step 1: graceful exit of old TL
     lead = next((m for m in config.members if m.name == TEAM_LEAD_AGENT_TYPE), None)
     if lead and lead.tmux_pane_id:
-        tmux = TmuxManager()
-        if await tmux.is_pane_alive(lead.tmux_pane_id):
-            await tmux.send_command(lead.tmux_pane_id, "/exit")
-            # 轮询等待退出 (30s timeout)
-            deadline = time.monotonic() + 30
-            while time.monotonic() < deadline:
-                if not await tmux.is_pane_alive(lead.tmux_pane_id):
-                    break
-                await asyncio.sleep(1)
-            else:
-                if await tmux.is_pane_alive(lead.tmux_pane_id):
-                    _error(f"TL pane {lead.tmux_pane_id} did not exit within 30s")
-                    sys.exit(1)
+        await _graceful_exit_pane(lead.tmux_pane_id, args.timeout, label="TL pane")
 
+    # Step 2: rotate session + spawn new TL
     new_bid, new_sid = await _spawn_new_lead(mgr, name, args.model)
+
+    # Step 3: wait for new TL initialization + agent state recovery
+    _TL_INIT_WAIT_SECONDS = 5
+    await asyncio.sleep(_TL_INIT_WAIT_SECONDS)
+
+    pm = ProcessManager()
+    fresh_config = mgr.read()
+    if fresh_config:
+        result = await sync_member_states(mgr, pm, fresh_config)
+    else:
+        from cc_team._sync import SyncResult
+
+        result = SyncResult()
 
     if args.use_json:
         _json_out(
@@ -231,13 +251,23 @@ async def _cmd_team_relay(args: argparse.Namespace) -> None:
                 "new_session": new_sid,
                 "old_backend_id": lead.tmux_pane_id if lead else "",
                 "new_backend_id": new_bid,
+                "agents": {
+                    "synced": result.active,
+                    "recovered": result.recovered,
+                    "inactive": result.newly_inactive,
+                },
             }
         )
     else:
         print("Relay complete:")
-        print(f"  Old session: {old_session}")
-        print(f"  New session: {new_sid}")
-        print(f"  New backend: {new_bid}")
+        print(f"  Session: {old_session[:8]} → {new_sid[:8]}")
+        old_bid = lead.tmux_pane_id if lead else "N/A"
+        print(f"  Backend: {old_bid} → {new_bid}")
+        total_active = len(result.active)
+        print(
+            f"  Agents: {len(result.recovered)} recovered, "
+            f"{total_active} active, {len(result.newly_inactive)} inactive"
+        )
 
 
 async def _cmd_team_session(args: argparse.Namespace) -> None:
@@ -387,39 +417,106 @@ async def _cmd_agent_shutdown(args: argparse.Namespace) -> None:
 
 
 async def _cmd_agent_sync(args: argparse.Namespace) -> None:
-    from cc_team.tmux import TmuxManager
-    from cc_team.types import TEAM_LEAD_AGENT_TYPE
+    from cc_team._sync import sync_member_states
+    from cc_team.process_manager import ProcessManager
 
     team = _require_team(args)
     mgr, config = await _require_config(team)
 
-    tmux = TmuxManager()
-    synced: list[str] = []
-    inactive: list[str] = []
+    result = await sync_member_states(mgr, ProcessManager(), config)
 
-    for member in config.members:
-        if member.agent_type == TEAM_LEAD_AGENT_TYPE:
-            continue
-        if not member.is_active:
-            continue
-        if not member.tmux_pane_id:
-            continue
-
-        alive = await tmux.is_pane_alive(member.tmux_pane_id)
-        if alive:
-            synced.append(member.name)
-            if not args.use_json and not args.quiet:
-                print(f"{member.name}: pane {member.tmux_pane_id} alive → synced")
-        else:
-            await mgr.update_member(member.name, is_active=False)
-            inactive.append(member.name)
-            if not args.use_json and not args.quiet:
-                print(f"{member.name}: pane {member.tmux_pane_id} dead → marked inactive")
+    if not args.use_json and not args.quiet:
+        for name in result.active:
+            bid = result.members[name].tmux_pane_id
+            print(f"{name}: pane {bid} alive → synced")
+        for name in result.recovered:
+            bid = result.members[name].tmux_pane_id
+            print(f"{name}: pane {bid} alive → recovered")
+        for name in result.newly_inactive:
+            print(f"{name}: dead → marked inactive")
 
     if args.use_json:
-        _json_out({"synced": synced, "inactive": inactive})
+        _json_out(
+            {
+                "synced": result.active,
+                "recovered": result.recovered,
+                "inactive": result.newly_inactive,
+            }
+        )
     elif not args.quiet:
-        print(f"Synced {len(synced)} agent(s), {len(inactive)} marked inactive")
+        parts = [f"{len(result.active)} synced"]
+        if result.recovered:
+            parts.append(f"{len(result.recovered)} recovered")
+        parts.append(f"{len(result.newly_inactive)} inactive")
+        print(f"Agents: {', '.join(parts)}")
+
+
+async def _cmd_agent_relay(args: argparse.Namespace) -> None:
+    """Context relay for a teammate: exit old process + respawn with fresh context."""
+    from cc_team._spawn import spawn_agent_workflow
+    from cc_team.process_manager import ProcessManager
+    from cc_team.types import SpawnAgentOptions
+
+    team = _require_team(args)
+    mgr, config = await _require_config(team)
+
+    # Look up member from already-loaded config (avoid double file read)
+    member = next((m for m in config.members if m.name == args.name), None)
+    if member is None:
+        _error(f"Member '{args.name}' not found in team '{team}'")
+        sys.exit(1)
+
+    if not member.tmux_pane_id:
+        _error(f"Agent '{args.name}' has no backend process to relay")
+        sys.exit(1)
+
+    old_backend = member.tmux_pane_id
+
+    # Step 1: graceful exit of old agent
+    await _graceful_exit_pane(old_backend, args.timeout, label="Agent pane")
+
+    # Step 2: remove old member from config
+    await mgr.remove_member(args.name)
+
+    # Step 3: respawn with preserved config (or new prompt)
+    prompt = args.prompt if args.prompt else (member.prompt or "Continue working")
+    agent_cwd = member.cwd or os.getcwd()
+
+    options = SpawnAgentOptions(
+        name=member.name,
+        prompt=prompt,
+        agent_type=member.agent_type,
+        model=member.model,
+        cwd=agent_cwd,
+    )
+
+    pm = ProcessManager()
+    new_backend, color = await spawn_agent_workflow(
+        mgr,
+        pm,
+        options,
+        team_name=team,
+        cwd=agent_cwd,
+        lead_session_id=config.lead_session_id,
+    )
+
+    prompt_status = "new" if args.prompt else "preserved from original"
+
+    if args.use_json:
+        _json_out(
+            {
+                "name": args.name,
+                "old_backend_id": old_backend,
+                "new_backend_id": new_backend,
+                "prompt": prompt_status,
+                "color": color or "",
+            }
+        )
+    else:
+        print("Agent relay complete:")
+        print(f"  Old backend: {old_backend}")
+        print(f"  New backend: {new_backend}")
+        print(f"  Prompt: ({prompt_status})")
 
 
 async def _cmd_agent_kill(args: argparse.Namespace) -> None:
@@ -698,6 +795,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Context relay (stop old TL + rotate session + spawn new TL)",
     )
     trl.add_argument("--model", default=DEFAULT_MODEL, help="Model for new team lead")
+    trl.add_argument("--timeout", type=int, default=30, help="Exit wait timeout in seconds")
     trl.set_defaults(func=_cmd_team_relay)
 
     tss = team_sub.add_parser("session", help="Query or rotate team lead session ID")
@@ -742,9 +840,18 @@ def _build_parser() -> argparse.ArgumentParser:
     asd.add_argument("--reason", default="CLI shutdown request", help="Shutdown reason")
     asd.set_defaults(func=_cmd_agent_shutdown)
 
+    arl = agent_sub.add_parser(
+        "relay",
+        help="Context relay: exit + respawn agent with fresh context",
+    )
+    arl.add_argument("--name", required=True, help="Agent name")
+    arl.add_argument("--prompt", help="New prompt (default: reuse original)")
+    arl.add_argument("--timeout", type=int, default=30, help="Exit wait timeout (seconds)")
+    arl.set_defaults(func=_cmd_agent_relay)
+
     asyn = agent_sub.add_parser(
         "sync",
-        help="Sync agents: verify pane liveness, mark dead as inactive",
+        help="Sync agents: verify pane liveness, recover or mark inactive",
     )
     asyn.set_defaults(func=_cmd_agent_sync)
 

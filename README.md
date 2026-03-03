@@ -8,6 +8,7 @@ Compatible with the [Claude Code](https://docs.anthropic.com/en/docs/claude-code
 
 ## Features
 
+- **Context Relay** — seamlessly refresh Team Lead or agent context without disrupting running teammates. One command handles session rotation, process restart, and automatic state recovery
 - **Full protocol compatibility** — works seamlessly with Claude Code's native team system
 - **Zero external dependencies** — only Python 3.10+ standard library
 - **Async-first** — built on `asyncio` for concurrent agent orchestration
@@ -132,6 +133,19 @@ cct --team-name my-project agent kill --name researcher
 cct --team-name my-project team destroy
 ```
 
+### Session Management
+
+```bash
+# TL context exhausted? One-command relay — teammates keep working
+cct --team-name my-project team relay
+
+# Agent context exhausted? Same concept, same simplicity
+cct --team-name my-project agent relay --name researcher
+
+# Sync agent states after external disruption
+cct --team-name my-project agent sync
+```
+
 All commands support `--json` for machine-readable output:
 
 ```bash
@@ -227,6 +241,21 @@ await ctrl.task_manager.add_dependency(task_b.id, [task_a.id])
 # List available (unblocked, unowned, pending) tasks
 available = ctrl.task_manager.list_available()
 ```
+
+### Context Relay
+
+Claude Code agents have a 200k token context window. When exhausted, the session needs a fresh start — but running teammates must not be disrupted.
+
+```python
+# SDK: rotate session + broadcast to agents
+new_session = await ctrl.relay()
+
+# CLI: full relay (exit old TL + rotate + spawn new TL + auto-recover agents)
+# cct --team-name my-project team relay
+# cct --team-name my-project agent relay --name worker-1
+```
+
+The relay pattern preserves agent identity (name, type, model, color, inbox) while refreshing only the process and context. Bidirectional sync automatically recovers agents whose `isActive` flag was corrupted by Claude Code's internal sync.
 
 ### Low-Level Access
 

@@ -700,7 +700,7 @@ class TestTeamRelay:
         isolated_home: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """正常 relay：退出旧 TL + 轮转 session + spawn 新 TL。"""
+        """Normal relay: exit old TL + rotate session + spawn new TL + sync agents."""
         old_config = team.read()
         assert old_config is not None
         old_sid = old_config.lead_session_id
@@ -715,24 +715,86 @@ class TestTeamRelay:
             ]
         )
 
-        with patch("cc_team.process_manager.ProcessManager") as MockPM:
+        with (
+            patch("cc_team.process_manager.ProcessManager") as MockPM,
+            patch("cc_team.cli.asyncio.sleep", new_callable=AsyncMock),
+        ):
             mock_pm = MockPM.return_value
             mock_pm.spawn_lead = AsyncMock(return_value="%70")
+            # Mock for post-relay sync step
+            mock_pm.track = lambda name, bid: None
+            mock_pm.is_running = AsyncMock(return_value=True)
+            mock_pm.untrack = lambda name: None
 
             await args.func(args)
 
-        # session 应已轮转
+        # Session should be rotated
         config = team.read()
         assert config is not None
         assert config.lead_session_id != old_sid
 
-        # TL pane 已更新
+        # TL pane should be updated
         lead = team.get_member("team-lead")
         assert lead is not None
         assert lead.tmux_pane_id == "%70"
 
         captured = capsys.readouterr()
         assert "Relay complete" in captured.out
+
+    @pytest.mark.asyncio
+    async def test_relay_post_sync_recovers_agents(
+        self,
+        team: TeamManager,
+        isolated_home: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Post-relay sync should recover inactive-but-alive agents."""
+        # Add an agent with isActive=false (simulating TL sync pollution)
+        member = TeamMember(
+            agent_id="w@test-team",
+            name="worker-1",
+            agent_type="general-purpose",
+            model="claude-sonnet-4-6",
+            joined_at=FIXED_MS,
+            tmux_pane_id="%68",
+            cwd="/tmp",
+            color="blue",
+            is_active=False,  # isActive pollution
+            backend_type="tmux",
+        )
+        await team.add_member(member)
+
+        parser = _build_parser()
+        args = parser.parse_args(
+            [
+                "--team-name",
+                "test-team",
+                "--json",
+                "team",
+                "relay",
+            ]
+        )
+
+        with (
+            patch("cc_team.process_manager.ProcessManager") as MockPM,
+            patch("cc_team.cli.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            mock_pm = MockPM.return_value
+            mock_pm.spawn_lead = AsyncMock(return_value="%70")
+            mock_pm.track = lambda name, bid: None
+            mock_pm.is_running = AsyncMock(return_value=True)
+            mock_pm.untrack = lambda name: None
+
+            await args.func(args)
+
+        captured = capsys.readouterr()
+        data = json.loads(captured.out)
+        assert "worker-1" in data["agents"]["recovered"]
+
+        # Agent should now be active in config
+        w = team.get_member("worker-1")
+        assert w is not None
+        assert w.is_active is True
 
 
 # ── team session ───────────────────────────────────────────
@@ -865,8 +927,8 @@ class TestAgentSync:
         isolated_home: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """正常 sync：存活 → synced，死亡 → inactive。"""
-        # 添加一个 active agent
+        """Normal sync: alive → synced, dead → inactive."""
+        # Add an active agent
         member = TeamMember(
             agent_id="w@test-team",
             name="worker-1",
@@ -880,7 +942,7 @@ class TestAgentSync:
             backend_type="tmux",
         )
         await team.add_member(member)
-        # 添加一个 dead agent
+        # Add a dead agent
         dead_member = TeamMember(
             agent_id="d@test-team",
             name="dead-agent",
@@ -905,7 +967,7 @@ class TestAgentSync:
             ]
         )
 
-        with patch("cc_team.tmux.TmuxManager") as MockTmux:
+        with patch("cc_team.process_manager.TmuxManager") as MockTmux:
             mock_tmux = MockTmux.return_value
 
             async def _is_alive(pane_id: str) -> bool:
@@ -921,7 +983,7 @@ class TestAgentSync:
         assert "dead-agent" in captured.out
         assert "inactive" in captured.out
 
-        # dead-agent 应标记为 inactive
+        # dead-agent should be marked inactive
         dead = team.get_member("dead-agent")
         assert dead is not None
         assert dead.is_active is False
@@ -933,7 +995,7 @@ class TestAgentSync:
         isolated_home: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """--json 输出 JSON 格式。"""
+        """--json output includes synced, recovered, and inactive."""
         member = TeamMember(
             agent_id="w@test-team",
             name="worker-1",
@@ -959,7 +1021,7 @@ class TestAgentSync:
             ]
         )
 
-        with patch("cc_team.tmux.TmuxManager") as MockTmux:
+        with patch("cc_team.process_manager.TmuxManager") as MockTmux:
             mock_tmux = MockTmux.return_value
             mock_tmux.is_pane_alive = AsyncMock(return_value=True)
 
@@ -968,5 +1030,271 @@ class TestAgentSync:
         captured = capsys.readouterr()
         data = json.loads(captured.out)
         assert "synced" in data
+        assert "recovered" in data
         assert "inactive" in data
         assert "worker-1" in data["synced"]
+
+    @pytest.mark.asyncio
+    async def test_agent_sync_recovers_inactive(
+        self,
+        team: TeamManager,
+        isolated_home: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Alive agent with isActive=false should be recovered."""
+        member = TeamMember(
+            agent_id="r@test-team",
+            name="revived",
+            agent_type="general-purpose",
+            model="claude-sonnet-4-6",
+            joined_at=FIXED_MS,
+            tmux_pane_id="%77",
+            cwd="/tmp",
+            color="purple",
+            is_active=False,  # isActive pollution
+            backend_type="tmux",
+        )
+        await team.add_member(member)
+
+        parser = _build_parser()
+        args = parser.parse_args(
+            [
+                "--team-name",
+                "test-team",
+                "agent",
+                "sync",
+            ]
+        )
+
+        with patch("cc_team.process_manager.TmuxManager") as MockTmux:
+            mock_tmux = MockTmux.return_value
+            mock_tmux.is_pane_alive = AsyncMock(return_value=True)
+
+            await args.func(args)
+
+        captured = capsys.readouterr()
+        assert "revived" in captured.out
+        assert "recovered" in captured.out
+
+        # Should now be active in config
+        m = team.get_member("revived")
+        assert m is not None
+        assert m.is_active is True
+
+    @pytest.mark.asyncio
+    async def test_agent_sync_json_includes_recovered(
+        self,
+        team: TeamManager,
+        isolated_home: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """--json output should include recovered agents."""
+        member = TeamMember(
+            agent_id="r@test-team",
+            name="revived",
+            agent_type="general-purpose",
+            model="claude-sonnet-4-6",
+            joined_at=FIXED_MS,
+            tmux_pane_id="%77",
+            cwd="/tmp",
+            color="purple",
+            is_active=False,  # isActive pollution
+            backend_type="tmux",
+        )
+        await team.add_member(member)
+
+        parser = _build_parser()
+        args = parser.parse_args(
+            [
+                "--team-name",
+                "test-team",
+                "--json",
+                "agent",
+                "sync",
+            ]
+        )
+
+        with patch("cc_team.process_manager.TmuxManager") as MockTmux:
+            mock_tmux = MockTmux.return_value
+            mock_tmux.is_pane_alive = AsyncMock(return_value=True)
+
+            await args.func(args)
+
+        captured = capsys.readouterr()
+        data = json.loads(captured.out)
+        assert "revived" in data["recovered"]
+        assert "revived" not in data["synced"]
+
+
+# ── agent relay ───────────────────────────────────────────
+
+
+class TestAgentRelay:
+    """agent relay CLI tests."""
+
+    @pytest.mark.asyncio
+    async def test_agent_relay_exits_and_respawns(
+        self,
+        team: TeamManager,
+        isolated_home: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """agent relay should exit old process and respawn with preserved config."""
+        # Add an active agent
+        member = TeamMember(
+            agent_id="w@test-team",
+            name="worker-1",
+            agent_type="general-purpose",
+            model="claude-sonnet-4-6",
+            joined_at=FIXED_MS,
+            tmux_pane_id="%68",
+            cwd="/tmp",
+            color="blue",
+            is_active=True,
+            prompt="Original task",
+            backend_type="tmux",
+        )
+        await team.add_member(member)
+
+        parser = _build_parser()
+        args = parser.parse_args(
+            [
+                "--team-name",
+                "test-team",
+                "--json",
+                "agent",
+                "relay",
+                "--name",
+                "worker-1",
+            ]
+        )
+
+        with (
+            patch("cc_team.tmux.TmuxManager") as MockTmux,
+            patch("cc_team.process_manager.ProcessManager") as MockPM,
+        ):
+            mock_tmux = MockTmux.return_value
+            mock_tmux.is_pane_alive = AsyncMock(return_value=False)  # already exited
+            mock_pm = MockPM.return_value
+            mock_pm.spawn = AsyncMock(return_value="%75")
+
+            await args.func(args)
+
+        captured = capsys.readouterr()
+        data = json.loads(captured.out)
+        assert data["name"] == "worker-1"
+        assert data["old_backend_id"] == "%68"
+        assert data["new_backend_id"] == "%75"
+        assert data["prompt"] == "preserved from original"
+
+        # New member should exist in config
+        m = team.get_member("worker-1")
+        assert m is not None
+        assert m.tmux_pane_id == "%75"
+        assert m.is_active is True
+
+    @pytest.mark.asyncio
+    async def test_agent_relay_with_new_prompt(
+        self,
+        team: TeamManager,
+        isolated_home: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """agent relay --prompt should use the new prompt."""
+        member = TeamMember(
+            agent_id="w@test-team",
+            name="worker-1",
+            agent_type="general-purpose",
+            model="claude-sonnet-4-6",
+            joined_at=FIXED_MS,
+            tmux_pane_id="%68",
+            cwd="/tmp",
+            color="blue",
+            is_active=True,
+            prompt="Original task",
+            backend_type="tmux",
+        )
+        await team.add_member(member)
+
+        parser = _build_parser()
+        args = parser.parse_args(
+            [
+                "--team-name",
+                "test-team",
+                "--json",
+                "agent",
+                "relay",
+                "--name",
+                "worker-1",
+                "--prompt",
+                "New mission",
+            ]
+        )
+
+        with (
+            patch("cc_team.tmux.TmuxManager") as MockTmux,
+            patch("cc_team.process_manager.ProcessManager") as MockPM,
+        ):
+            mock_tmux = MockTmux.return_value
+            mock_tmux.is_pane_alive = AsyncMock(return_value=False)
+            mock_pm = MockPM.return_value
+            mock_pm.spawn = AsyncMock(return_value="%80")
+
+            await args.func(args)
+
+        captured = capsys.readouterr()
+        data = json.loads(captured.out)
+        assert data["prompt"] == "new"
+        assert data["new_backend_id"] == "%80"
+
+        # Verify new prompt was used (check inbox)
+        import cc_team.paths as p
+
+        inbox_path = p.inbox_path("test-team", "worker-1")
+        msgs = json.loads(inbox_path.read_text())
+        assert any("New mission" in m.get("text", "") for m in msgs)
+
+    @pytest.mark.asyncio
+    async def test_agent_relay_not_found_exits(
+        self,
+        team: TeamManager,
+        isolated_home: Path,
+    ) -> None:
+        """agent relay for nonexistent agent should exit(1)."""
+        parser = _build_parser()
+        args = parser.parse_args(
+            [
+                "--team-name",
+                "test-team",
+                "agent",
+                "relay",
+                "--name",
+                "ghost",
+            ]
+        )
+        with pytest.raises(SystemExit):
+            await args.func(args)
+
+    @pytest.mark.asyncio
+    async def test_agent_relay_no_backend_exits(
+        self,
+        team: TeamManager,
+        isolated_home: Path,
+    ) -> None:
+        """agent relay with no backend_id should exit(1)."""
+        # Register agent without backend
+        await team.register_member(name="no-pane", agent_type="general-purpose")
+
+        parser = _build_parser()
+        args = parser.parse_args(
+            [
+                "--team-name",
+                "test-team",
+                "agent",
+                "relay",
+                "--name",
+                "no-pane",
+            ]
+        )
+        with pytest.raises(SystemExit):
+            await args.func(args)

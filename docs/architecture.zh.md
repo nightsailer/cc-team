@@ -369,6 +369,41 @@ class ProcessManager:
         """构建 claude CLI 参数（协议 §C.5）。"""
 ```
 
+### 6.5 上下文接力架构（Context Relay）
+
+Claude Code Agent 有 200k token 上下文窗口。耗尽时需要全新开始，但运行中的 Teammate 不能被打断。
+
+**问题**
+
+原生 Claude Code `/clear`：
+- 终止所有 Teammate 的 tmux pane（已确认的 bug）
+- Session ID 静默变更，config.json 未更新
+- Agent 状态被污染（存活 Agent 的 isActive 被置为 false）
+
+**cct 的解决方案：统一接力模式**
+
+TL 和 Teammate 使用相同的接力模式：
+
+```
+┌─────────────────────────────────────────────┐
+│  cct team relay / cct agent relay            │
+│                                              │
+│  1. 优雅退出（/exit → 轮询等待退出）           │
+│  2. 轮转会话 / 保留身份                       │
+│  3. 启动全新进程（相同配置）                   │
+│  4. 自动恢复 Agent 状态（sync）               │
+│  5. 消息保留（基于文件的 inbox）              │
+└─────────────────────────────────────────────┘
+```
+
+关键设计：Agent 身份（名称、类型、模型、颜色、收件箱）保存在 config.json 和文件系统中。仅刷新进程和上下文。
+
+**双向同步** (`sync_agents()`):
+- 存活 + isActive=false → 恢复（修复 isActive 污染）
+- 存活 + isActive=true → 正常同步
+- 死亡 + isActive=true → 标记不活跃
+- 死亡 + isActive=false → 跳过（避免冗余写入）
+
 ---
 
 ## 7. 通信机制

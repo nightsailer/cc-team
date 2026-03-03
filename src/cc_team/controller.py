@@ -18,6 +18,7 @@ import uuid
 from typing import Any
 
 from cc_team._spawn import spawn_agent_workflow
+from cc_team._sync import sync_member_states
 from cc_team.agent_handle import AgentHandle
 from cc_team.event_router import EventRouter
 from cc_team.events import AsyncEventEmitter
@@ -158,7 +159,7 @@ class Controller(AsyncEventEmitter):
         await self._start_poller()
 
         # Recover existing agent handles from config (verify liveness)
-        await self.sync_agents()
+        await self.sync_agents()  # return value unused in attach
 
         self._initialized = True
         self._created_team = False
@@ -293,50 +294,40 @@ class Controller(AsyncEventEmitter):
 
     # ── Agent Sync ───────────────────────────────────────────
 
-    async def sync_agents(self) -> list[AgentHandle]:
-        """Discover and recover/cleanup agent connections.
+    async def sync_agents(self) -> tuple[list[AgentHandle], list[str]]:
+        """Discover, recover, and cleanup agent connections (bidirectional).
 
-        For each non-TL active member in config.json:
-        1. Has backend_id → check process liveness
-           - alive → register via _register_agent
-           - dead → untrack + mark inactive in config
-        2. No backend_id → skip (register-only member)
+        For each non-TL member with a backend_id in config.json:
+        - alive + isActive=false → **recover**: set isActive=true, register handle
+        - alive + isActive=true  → normal sync, register handle
+        - dead  + isActive=true  → mark isActive=false
+        - dead  + isActive=false → skip (no redundant write)
 
         Returns:
-            List of recovered AgentHandles
+            (synced_handles, recovered_names) — synced includes recovered agents
         """
         config = self._team_manager.read()
         if config is None:
-            return []
+            return [], []
 
+        result = await sync_member_states(
+            self._team_manager,
+            self._process_manager,
+            config,
+        )
+
+        # Register handles for all alive agents
         synced: list[AgentHandle] = []
-        for member in config.members:
-            if member.agent_type == TEAM_LEAD_AGENT_TYPE:
-                continue
-            if not member.is_active:
-                continue
-            if not member.tmux_pane_id:
-                continue
-
-            # Track first so is_running can resolve the pane
-            self._process_manager.track(member.name, member.tmux_pane_id)
-            alive = await self._process_manager.is_running(member.name)
-            if not alive:
-                self._process_manager.untrack(member.name)
-                await self._team_manager.update_member(
-                    member.name,
-                    is_active=False,
-                )
-                continue
-
+        for name in result.active + result.recovered:
+            member = result.members[name]
             handle = self._register_agent(
-                member.name,
+                name,
                 backend_id=member.tmux_pane_id,
                 color=member.color,
             )
             synced.append(handle)
 
-        return synced
+        return synced, result.recovered
 
     # ── Agent Management ─────────────────────────────────────
 

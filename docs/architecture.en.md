@@ -369,6 +369,43 @@ class ProcessManager:
         """Build claude CLI arguments (protocol §C.5)."""
 ```
 
+### 6.5 Context Relay Architecture
+
+Claude Code agents have a 200k token context window. When exhausted, the session
+needs a fresh start — but running teammates must not be disrupted.
+
+**The Problem**
+
+Native Claude Code `/clear`:
+- Kills all teammate tmux panes (confirmed bug)
+- Session ID changes silently, config.json not updated
+- Agent state corrupted (isActive=false for alive agents)
+
+**cct's Solution: Unified Relay**
+
+Both TL and Teammates use the same relay pattern:
+
+```
+┌─────────────────────────────────────────────┐
+│  cct team relay / cct agent relay            │
+│                                              │
+│  1. Graceful exit (/exit → poll for exit)    │
+│  2. Rotate session / Preserve identity       │
+│  3. Spawn fresh process (same config)        │
+│  4. Auto-recover agent states (sync)         │
+│  5. Messages preserved (file-based inbox)    │
+└─────────────────────────────────────────────┘
+```
+
+Key design: agent identity (name, type, model, color, inbox) is preserved
+in config.json and filesystem. Only the process and context are refreshed.
+
+**Bidirectional sync** (`sync_agents()`):
+- Alive + isActive=false → recover (fix isActive pollution)
+- Alive + isActive=true → normal sync
+- Dead + isActive=true → mark inactive
+- Dead + isActive=false → skip (no redundant write)
+
 ---
 
 ## 7. Communication Mechanism

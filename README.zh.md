@@ -8,6 +8,7 @@
 
 ## 特性
 
+- **上下文接力（Context Relay）** — 无缝刷新 Team Lead 或 Agent 上下文，不中断运行中的 Teammate。一条命令完成会话轮转、进程重启和自动状态恢复
 - **完全协议兼容** — 与 Claude Code 原生团队系统无缝协作
 - **零外部依赖** — 仅需 Python 3.10+ 标准库
 - **异步优先** — 基于 `asyncio` 构建，支持并发智能体编排
@@ -132,6 +133,19 @@ cct --team-name my-project agent kill --name researcher
 cct --team-name my-project team destroy
 ```
 
+### 会话管理
+
+```bash
+# TL 上下文耗尽？一条命令接力 — Teammate 继续工作
+cct --team-name my-project team relay
+
+# Agent 上下文耗尽？同样的概念，同样简单
+cct --team-name my-project agent relay --name researcher
+
+# 外部干扰后同步 Agent 状态
+cct --team-name my-project agent sync
+```
+
 所有命令均支持 `--json` 参数输出机器可读格式：
 
 ```bash
@@ -227,6 +241,21 @@ await ctrl.task_manager.add_dependency(task_b.id, [task_a.id])
 # 列出可用任务（未阻塞、未分配、待处理）
 available = ctrl.task_manager.list_available()
 ```
+
+### 上下文接力（Context Relay）
+
+Claude Code Agent 有 200k token 上下文窗口。耗尽时需要重新开始，但运行中的 Teammate 不能被打断。
+
+```python
+# SDK: 轮转会话 + 广播给 Agent
+new_session = await ctrl.relay()
+
+# CLI: 完整接力（退出旧 TL + 轮转 + 启动新 TL + 自动恢复 Agent）
+# cct --team-name my-project team relay
+# cct --team-name my-project agent relay --name worker-1
+```
+
+接力模式保留 Agent 身份（名称、类型、模型、颜色、收件箱），仅刷新进程和上下文。双向同步自动恢复被 Claude Code 内部同步污染的 `isActive` 标记。
 
 ### 底层访问
 

@@ -669,17 +669,17 @@ class TestAttach:
         await mgr.destroy()
 
     @pytest.mark.asyncio
-    async def test_attach_restores_active_handles_only(
+    async def test_attach_recovers_alive_inactive_agents(
         self, isolated_home: Path, mock_pm: ProcessManager
     ) -> None:
-        """attach 仅恢复 is_active=True 的非 TL 成员。"""
+        """attach recovers alive agents regardless of isActive flag (bidirectional sync)."""
         from cc_team._serialization import now_ms
         from cc_team.team_manager import TeamManager
         from cc_team.types import TeamMember
 
         mgr = TeamManager("test-team")
         await mgr.create(lead_session_id="s1")
-        # 添加 active agent
+        # Active agent (pane alive)
         await mgr.add_member(
             TeamMember(
                 agent_id="a@test-team",
@@ -694,7 +694,7 @@ class TestAttach:
                 backend_type="tmux",
             )
         )
-        # 添加 inactive agent
+        # Inactive agent (pane alive → should be recovered)
         await mgr.add_member(
             TeamMember(
                 agent_id="i@test-team",
@@ -712,11 +712,16 @@ class TestAttach:
 
         c = Controller(
             ControllerOptions(team_name="test-team"),
-            process_manager=mock_pm,
+            process_manager=mock_pm,  # mock tmux returns is_pane_alive=True
         )
         await c.attach()
+        # Both should be recovered since both panes are alive
         assert "active-agent" in c.list_agents()
-        assert "inactive-agent" not in c.list_agents()
+        assert "inactive-agent" in c.list_agents()
+        # inactive-agent should now be marked active in config
+        member = mgr.get_member("inactive-agent")
+        assert member is not None
+        assert member.is_active is True
         await c.shutdown()
         await mgr.destroy()
 
@@ -865,10 +870,11 @@ class TestSyncAgents:
         )
         c._initialized = True
 
-        synced = await c.sync_agents()
+        synced, recovered = await c.sync_agents()
 
         assert len(synced) == 1
         assert synced[0].name == "worker"
+        assert recovered == []  # already active, not recovered
         assert "worker" in c.list_agents()
         # ProcessManager 应有 track 记录
         assert "worker" in mock_pm.tracked_agents()
@@ -912,12 +918,106 @@ class TestSyncAgents:
         )
         c._initialized = True
 
-        synced = await c.sync_agents()
+        synced, recovered = await c.sync_agents()
 
         assert len(synced) == 0
+        assert recovered == []
         assert "dead-agent" not in c.list_agents()
         # config 中应标记为 inactive
         member = mgr.get_member("dead-agent")
+        assert member is not None
+        assert member.is_active is False
+        await c.shutdown()
+        await mgr.destroy()
+
+    @pytest.mark.asyncio
+    async def test_sync_recovers_inactive_alive_agent(
+        self,
+        isolated_home: Path,
+        mock_pm: ProcessManager,
+    ) -> None:
+        """Alive pane with isActive=false should be recovered to active."""
+        from cc_team.team_manager import TeamManager
+        from cc_team.types import TeamMember
+
+        mgr = TeamManager("test-team")
+        await mgr.create(lead_session_id="s1")
+        await mgr.add_member(
+            TeamMember(
+                agent_id="r@test-team",
+                name="revived",
+                agent_type="general-purpose",
+                model="claude-sonnet-4-6",
+                joined_at=FIXED_MS,
+                tmux_pane_id="%77",
+                cwd="/tmp",
+                color="purple",
+                is_active=False,  # isActive pollution
+                backend_type="tmux",
+            )
+        )
+
+        c = Controller(
+            ControllerOptions(team_name="test-team"),
+            process_manager=mock_pm,
+        )
+        c._initialized = True
+
+        synced, recovered = await c.sync_agents()
+
+        assert len(synced) == 1
+        assert synced[0].name == "revived"
+        assert recovered == ["revived"]
+        assert "revived" in c.list_agents()
+        # config should now show isActive=true
+        member = mgr.get_member("revived")
+        assert member is not None
+        assert member.is_active is True
+        await c.shutdown()
+        await mgr.destroy()
+
+    @pytest.mark.asyncio
+    async def test_sync_skips_dead_already_inactive(
+        self,
+        isolated_home: Path,
+    ) -> None:
+        """Dead pane with isActive=false should be skipped (no redundant write)."""
+        from cc_team.team_manager import TeamManager
+        from cc_team.types import TeamMember
+
+        mgr = TeamManager("test-team")
+        await mgr.create(lead_session_id="s1")
+        await mgr.add_member(
+            TeamMember(
+                agent_id="g@test-team",
+                name="ghost",
+                agent_type="general-purpose",
+                model="claude-sonnet-4-6",
+                joined_at=FIXED_MS,
+                tmux_pane_id="%44",
+                cwd="/tmp",
+                color="red",
+                is_active=False,  # already inactive
+                backend_type="tmux",
+            )
+        )
+
+        dead_tmux = _mock_tmux()
+        dead_tmux.is_pane_alive = AsyncMock(return_value=False)
+        dead_pm = ProcessManager(tmux=dead_tmux)
+
+        c = Controller(
+            ControllerOptions(team_name="test-team"),
+            process_manager=dead_pm,
+        )
+        c._initialized = True
+
+        synced, recovered = await c.sync_agents()
+
+        assert len(synced) == 0
+        assert recovered == []
+        # Should still be inactive (unchanged)
+        member = mgr.get_member("ghost")
         assert member is not None
         assert member.is_active is False
         await c.shutdown()

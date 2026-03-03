@@ -87,16 +87,18 @@ Context relay: rotate session ID, broadcast `session_relay` to all active agents
 new_session_id = await ctrl.relay()
 ```
 
-#### `async sync_agents() -> list[AgentHandle]`
+#### `async sync_agents() -> tuple[list[AgentHandle], list[str]]`
 
-Discover and recover/cleanup agent connections. For each non-TL active member with a pane_id in config.json:
-- Alive pane → track in ProcessManager + create AgentHandle
-- Dead pane → mark `is_active=False` in config
+Bidirectional agent state sync. For each non-TL member with a backend_id in config.json:
+- Alive + isActive=false → **recover**: set isActive=true, register handle
+- Alive + isActive=true → normal sync, register handle
+- Dead + isActive=true → mark isActive=false
+- Dead + isActive=false → skip (no redundant write)
 
-Returns the list of recovered AgentHandles. Called automatically during `attach()`.
+Returns `(synced_handles, recovered_names)`. Called automatically during `attach()`.
 
 ```python
-recovered = await ctrl.sync_agents()
+synced, recovered = await ctrl.sync_agents()
 ```
 
 #### `async spawn(options: SpawnAgentOptions) -> AgentHandle`
@@ -815,6 +817,51 @@ class AgentBackend(Protocol):
     def tracked_agents(self) -> list[str]: ...
     async def send_input(self, agent_name: str, text: str) -> None: ...
 ```
+
+---
+
+## CLI Reference (Session Management)
+
+### `cct team relay`
+
+Context relay for Team Lead: exit old TL, rotate session, spawn new TL, and auto-recover agent states.
+
+```bash
+cct --team-name <name> team relay [--model <model>] [--timeout <seconds>]
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `--model` | `claude-sonnet-4-6` | Model for new TL |
+| `--timeout` | `30` | Exit wait timeout in seconds |
+
+**Output** (JSON): `old_session`, `new_session`, `old_backend_id`, `new_backend_id`, `agents.synced`, `agents.recovered`, `agents.inactive`
+
+### `cct agent relay`
+
+Context relay for a teammate: exit old process, respawn with fresh context.
+
+```bash
+cct --team-name <name> agent relay --name <agent> [--prompt <new-prompt>] [--timeout <seconds>]
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `--name` | (required) | Agent name |
+| `--prompt` | (reuse original) | New prompt for the agent |
+| `--timeout` | `30` | Exit wait timeout in seconds |
+
+**Output** (JSON): `name`, `old_backend_id`, `new_backend_id`, `prompt`, `color`
+
+### `cct agent sync`
+
+Bidirectional agent state sync: verify process liveness, recover inactive-but-alive agents, mark dead agents.
+
+```bash
+cct --team-name <name> agent sync
+```
+
+**Output** (JSON): `synced`, `recovered`, `inactive`
 
 ---
 
