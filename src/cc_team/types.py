@@ -75,7 +75,7 @@ class TeamMember:
     agent_type: str  # "team-lead", "general-purpose", "Explore" 等
     model: str  # LLM 模型 ID
     joined_at: int  # Unix 毫秒时间戳
-    tmux_pane_id: str  # tmux pane ID, lead 为空字符串
+    backend_id: str  # backend-specific process identifier, empty for lead
     cwd: str  # 工作目录
     subscriptions: list[str] = field(default_factory=list)  # 预留，始终空
 

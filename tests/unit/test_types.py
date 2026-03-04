@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from conftest import make_member
+
 from cc_team.types import (
     AGENT_COLORS,
     AgentController,
@@ -17,7 +19,6 @@ from cc_team.types import (
     TaskAssignmentMessage,
     TaskFile,
     TeamConfig,
-    TeamMember,
 )
 
 # ── TeamMember ──────────────────────────────────────────────
@@ -28,17 +29,18 @@ class TestTeamMember:
 
     def test_lead_member_has_8_required_fields(self) -> None:
         """Lead 成员仅使用公共字段，Teammate 专有字段为 None。"""
-        lead = TeamMember(
+        lead = make_member(
+            "team-lead",
             agent_id="team-lead@my-team",
-            name="team-lead",
             agent_type="team-lead",
-            model="claude-sonnet-4-6",
             joined_at=1772193600000,
-            tmux_pane_id="",
-            cwd="/workspace",
+            backend_id="",
+            color=None,
+            is_active=None,
+            backend_type=None,
         )
         assert lead.agent_id == "team-lead@my-team"
-        assert lead.tmux_pane_id == ""  # Lead 为空字符串
+        assert lead.backend_id == ""  # Lead 为空字符串
         assert lead.subscriptions == []  # 预留字段始终空
         # Teammate 专有字段全部为 None
         assert lead.prompt is None
@@ -49,19 +51,13 @@ class TestTeamMember:
 
     def test_teammate_member_has_13_fields(self) -> None:
         """Teammate 使用全部 13 个字段。"""
-        mate = TeamMember(
+        mate = make_member(
+            "researcher",
             agent_id="researcher@my-team",
-            name="researcher",
-            agent_type="general-purpose",
-            model="claude-sonnet-4-6",
             joined_at=1772193601000,
-            tmux_pane_id="%14",
-            cwd="/workspace",
+            backend_id="%14",
             prompt="You are a researcher.",
-            color="blue",
             plan_mode_required=False,
-            backend_type="tmux",
-            is_active=True,
         )
         assert mate.prompt == "You are a researcher."
         assert mate.color == "blue"

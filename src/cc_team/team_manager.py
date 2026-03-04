@@ -93,7 +93,7 @@ class TeamManager:
             agent_type="team-lead",
             model=lead_model,
             joined_at=timestamp,
-            tmux_pane_id="",
+            backend_id="",
             cwd=cwd,
         )
 
@@ -206,7 +206,7 @@ class TeamManager:
                 agent_type=agent_type,
                 model=model,
                 joined_at=now_ms(),
-                tmux_pane_id="",
+                backend_id="",
                 cwd=cwd,
                 color=color,
                 plan_mode_required=plan_mode_required,
@@ -291,6 +291,35 @@ class TeamManager:
                     setattr(target, field_name, value)
             atomic_write_json(self._config_path, team_config_to_dict(config))
             return target
+
+    async def batch_update_members(self, updates: dict[str, dict[str, object]]) -> None:
+        """Batch update multiple members in a single read-modify-write cycle.
+
+        More efficient than calling update_member() in a loop when multiple
+        members need updating (e.g., sync loop marking several agents inactive).
+
+        Args:
+            updates: ``{member_name: {field: value, ...}, ...}``
+                     Unknown member names are silently skipped.
+
+        Raises:
+            FileNotFoundError: team config does not exist.
+        """
+        if not updates:
+            return
+        async with self._lock.acquire():
+            data = read_json(self._config_path)
+            if data is None:
+                raise FileNotFoundError(f"Team config not found: {self._config_path}")
+            config = team_config_from_dict(data)
+            for member in config.members:
+                member_updates = updates.get(member.name)
+                if member_updates is None:
+                    continue
+                for field_name, value in member_updates.items():
+                    if hasattr(member, field_name):
+                        setattr(member, field_name, value)
+            atomic_write_json(self._config_path, team_config_to_dict(config))
 
     # ── Session 管理 ────────────────────────────────────────
 

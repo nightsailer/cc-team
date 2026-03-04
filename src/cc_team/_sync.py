@@ -10,10 +10,15 @@ config.json ``isActive`` with reality:
 - alive + isActive=true  -> normal (already consistent)
 - dead  + isActive=true  -> mark isActive=false
 - dead  + isActive=false -> skip (no redundant write)
+
+Optimisations (TODOs #6 & #7):
+- ``is_running`` checks are executed concurrently via ``asyncio.gather``.
+- State updates are batched into a single ``batch_update_members`` call.
 """
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -62,19 +67,26 @@ async def sync_member_states(
     """
     result = SyncResult()
 
+    # Phase 1: collect candidates and register tracking
+    candidates: list[TeamMember] = []
     for member in config.members:
-        if member.agent_type == TEAM_LEAD_AGENT_TYPE:
+        if member.agent_type == TEAM_LEAD_AGENT_TYPE or not member.backend_id:
             continue
-        if not member.tmux_pane_id:
-            continue
+        pm.track(member.name, member.backend_id)
+        candidates.append(member)
 
-        # Track first so is_running can resolve the backend id
-        pm.track(member.name, member.tmux_pane_id)
-        alive = await pm.is_running(member.name)
+    if not candidates:
+        return result
 
+    # Phase 2: parallel is_running checks
+    alive_flags = await asyncio.gather(*(pm.is_running(m.name) for m in candidates))
+
+    # Phase 3: categorise + collect batch updates
+    batch: dict[str, dict[str, object]] = {}
+    for member, alive in zip(candidates, alive_flags, strict=True):
         if alive:
             if not member.is_active:
-                await mgr.update_member(member.name, is_active=True)
+                batch[member.name] = {"is_active": True}
                 result.recovered.append(member.name)
             else:
                 result.active.append(member.name)
@@ -82,7 +94,10 @@ async def sync_member_states(
         else:
             pm.untrack(member.name)
             if member.is_active:
-                await mgr.update_member(member.name, is_active=False)
+                batch[member.name] = {"is_active": False}
                 result.newly_inactive.append(member.name)
+
+    # Phase 4: single atomic write for all state changes
+    await mgr.batch_update_members(batch)
 
     return result

@@ -322,7 +322,7 @@ class Controller(AsyncEventEmitter):
             member = result.members[name]
             handle = self._register_agent(
                 name,
-                backend_id=member.tmux_pane_id,
+                backend_id=member.backend_id,
                 color=member.color,
             )
             synced.append(handle)

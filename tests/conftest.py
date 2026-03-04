@@ -1,12 +1,13 @@
-"""cc-team 测试全局 fixtures。
+"""cc-team test fixtures.
 
-提供路径隔离、时间戳控制、tmux mock 等测试基础设施。
+Provides path isolation, timestamp control, tmux mock, and TeamMember factory.
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -14,6 +15,7 @@ import cc_team._serialization as ser_mod
 import cc_team.inbox as inbox_mod
 import cc_team.paths as paths_mod
 import cc_team.team_manager as tm_mod
+from cc_team.types import TeamMember
 
 # ── 路径隔离 ────────────────────────────────────────────────
 
@@ -69,8 +71,37 @@ def isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def read_inbox(team_name: str, agent_name: str) -> list[dict]:
-    """读取 agent inbox 文件原始 JSON。"""
+    """Read raw JSON from agent inbox file."""
     path = paths_mod.inbox_path(team_name, agent_name)
     if not path.exists():
         return []
     return json.loads(path.read_text())
+
+
+# ── TeamMember factory ────────────────────────────────────────
+
+
+def make_member(name: str = "worker-1", **overrides: Any) -> TeamMember:
+    """Factory for TeamMember with sensible defaults.
+
+    Args:
+        name: Agent name (also used to derive agent_id).
+        **overrides: Any TeamMember field to override.
+
+    Returns:
+        TeamMember instance with defaults merged with overrides.
+    """
+    defaults: dict[str, Any] = {
+        "agent_id": f"{name}@test-team",
+        "name": name,
+        "agent_type": "general-purpose",
+        "model": "claude-sonnet-4-6",
+        "joined_at": FIXED_MS,
+        "backend_id": "%1",
+        "cwd": "/workspace",
+        "color": "blue",
+        "is_active": True,
+        "backend_type": "tmux",
+    }
+    defaults.update(overrides)
+    return TeamMember(**defaults)

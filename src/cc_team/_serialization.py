@@ -41,6 +41,13 @@ from cc_team.types import (
     TeamMember,
 )
 
+# Types requiring special field-name overrides during serialization.
+# TeamMember.backend_id maps to "tmuxPaneId" (protocol compat), while
+# ShutdownApprovedMessage.backend_id maps to "backendId" (default).
+_TYPE_FIELD_OVERRIDES: dict[type, dict[str, str]] = {
+    TeamMember: {"backend_id": "tmuxPaneId"},
+}
+
 T = TypeVar("T")
 
 # ── 时间戳工厂（可测试性注入点）──────────────────────────────
@@ -74,7 +81,7 @@ _PYTHON_TO_JSON: dict[str, str] = {
     "agent_id": "agentId",
     "agent_type": "agentType",
     "joined_at": "joinedAt",
-    "tmux_pane_id": "tmuxPaneId",
+    # NOTE: TeamMember.backend_id → "tmuxPaneId" is handled via _TYPE_FIELD_OVERRIDES
     "plan_mode_required": "planModeRequired",
     "backend_type": "backendType",
     "is_active": "isActive",
@@ -112,6 +119,8 @@ _JSON_TO_PYTHON.update(
         # agent_id 在 permission 消息中保持 snake_case
         "agent_id": "agent_id",
         "request_id": "request_id",  # snake_case 版本
+        # TeamMember: "tmuxPaneId" → backend_id (protocol compat, not in _PYTHON_TO_JSON)
+        "tmuxPaneId": "backend_id",
     }
 )
 
@@ -149,6 +158,7 @@ def to_json_dict(obj: Any, *, cls: type | None = None) -> dict[str, Any]:
     """
     actual_cls = cls or type(obj)
     is_permission = actual_cls in _PERMISSION_TYPES
+    type_overrides = _TYPE_FIELD_OVERRIDES.get(actual_cls)
     result: dict[str, Any] = {}
 
     for f in fields(obj):
@@ -157,7 +167,7 @@ def to_json_dict(obj: Any, *, cls: type | None = None) -> dict[str, Any]:
         if value is None:
             continue
 
-        json_key = _to_json_key(f.name, is_permission=is_permission)
+        json_key = _to_json_key(f.name, is_permission=is_permission, type_overrides=type_overrides)
 
         # Recursively handle nested dataclass
         if hasattr(value, "__dataclass_fields__"):
@@ -170,17 +180,26 @@ def to_json_dict(obj: Any, *, cls: type | None = None) -> dict[str, Any]:
     return result
 
 
-def _to_json_key(python_key: str, *, is_permission: bool = False) -> str:
-    """将 Python 字段名转为 JSON key。"""
-    # Permission 类型中特定字段保持 snake_case
+def _to_json_key(
+    python_key: str,
+    *,
+    is_permission: bool = False,
+    type_overrides: dict[str, str] | None = None,
+) -> str:
+    """Convert Python field name to JSON key."""
+    # Permission types keep specific fields as snake_case
     if is_permission and python_key in _PERMISSION_SNAKE_FIELDS:
         return python_key
 
-    # 查找映射表
+    # Per-type overrides take precedence (e.g. TeamMember.backend_id → tmuxPaneId)
+    if type_overrides and python_key in type_overrides:
+        return type_overrides[python_key]
+
+    # Global mapping table
     if python_key in _PYTHON_TO_JSON:
         return _PYTHON_TO_JSON[python_key]
 
-    # 无映射则原样返回（如 name, text, read, summary, color 等）
+    # Unmapped fields pass through (e.g. name, text, read, summary, color)
     return python_key
 
 

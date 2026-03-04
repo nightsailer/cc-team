@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 
+from conftest import make_member
+
 from cc_team._serialization import (
     build_message_body,
     inbox_message_from_dict,
@@ -30,7 +32,6 @@ from cc_team.types import (
     TaskAssignmentMessage,
     TaskFile,
     TeamConfig,
-    TeamMember,
 )
 
 # ── 黄金数据集（独立构造，基于协议规范）─────────────────────
@@ -47,28 +48,21 @@ class TestTeamConfigRoundtrip:
             lead_agent_id="team-lead@test-team",
             lead_session_id="a1b2c3d4-e5f6-7890-abcd-ef1234567890",
             members=[
-                TeamMember(
-                    agent_id="team-lead@test-team",
-                    name="team-lead",
+                make_member(
+                    "team-lead",
                     agent_type="team-lead",
-                    model="claude-sonnet-4-6",
                     joined_at=1772193600000,
-                    tmux_pane_id="",
-                    cwd="/workspace",
+                    backend_id="",
+                    color=None,
+                    is_active=None,
+                    backend_type=None,
                 ),
-                TeamMember(
-                    agent_id="researcher@test-team",
-                    name="researcher",
-                    agent_type="general-purpose",
-                    model="claude-sonnet-4-6",
+                make_member(
+                    "researcher",
                     joined_at=1772193601000,
-                    tmux_pane_id="%14",
-                    cwd="/workspace",
+                    backend_id="%14",
                     prompt="You are a researcher.",
-                    color="blue",
                     plan_mode_required=False,
-                    backend_type="tmux",
-                    is_active=True,
                 ),
             ],
         )
@@ -91,7 +85,7 @@ class TestTeamConfigRoundtrip:
 
         lead = restored.members[0]
         assert lead.agent_id == "team-lead@test-team"
-        assert lead.tmux_pane_id == ""
+        assert lead.backend_id == ""
         assert lead.subscriptions == []
         assert lead.prompt is None  # Lead 无此字段
 

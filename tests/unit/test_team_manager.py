@@ -16,13 +16,14 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from conftest import make_member
 
 import cc_team._serialization as ser_mod
 import cc_team.paths as paths_mod
 import cc_team.team_manager as tm_mod
 from cc_team.exceptions import AgentNotFoundError
 from cc_team.team_manager import TeamManager
-from cc_team.types import AGENT_COLORS, TeamMember
+from cc_team.types import AGENT_COLORS
 
 # ── Fixtures ──────────────────────────────────────────────────
 
@@ -72,7 +73,7 @@ class TestTeamCreate:
         lead = config.members[0]
         assert lead.name == "team-lead"
         assert lead.agent_type == "team-lead"
-        assert lead.tmux_pane_id == ""
+        assert lead.backend_id == ""
         assert lead.joined_at == FIXED_MS
 
     @pytest.mark.asyncio
@@ -166,17 +167,8 @@ class TestTeamAddMember:
     async def test_add_member_increases_count(self, manager: TeamManager) -> None:
         """添加成员后 members 数量增加。"""
         await manager.create()
-        new_member = TeamMember(
-            agent_id="worker-1@test-team",
-            name="worker-1",
-            agent_type="general-purpose",
-            model="claude-sonnet-4-6",
-            joined_at=FIXED_MS,
-            tmux_pane_id="%1",
-            cwd="/workspace",
-            color="blue",
-            is_active=True,
-            backend_type="tmux",
+        new_member = make_member(
+            "worker-1", agent_type="general-purpose", model="claude-sonnet-4-6"
         )
         await manager.add_member(new_member)
 
@@ -188,14 +180,11 @@ class TestTeamAddMember:
     async def test_add_member_persisted(self, manager: TeamManager) -> None:
         """添加的成员应持久化到磁盘。"""
         await manager.create()
-        member = TeamMember(
-            agent_id="dev@test-team",
-            name="dev",
+        member = make_member(
+            "dev",
             agent_type="general-purpose",
             model="claude-sonnet-4-6",
-            joined_at=FIXED_MS,
-            tmux_pane_id="%2",
-            cwd="/workspace",
+            backend_id="%2",
         )
         await manager.add_member(member)
 
@@ -208,13 +197,11 @@ class TestTeamAddMember:
     @pytest.mark.asyncio
     async def test_add_member_no_config_raises(self, manager: TeamManager) -> None:
         """无 config.json 时 add_member 应抛出 FileNotFoundError。"""
-        member = TeamMember(
-            agent_id="ghost@test-team",
-            name="ghost",
+        member = make_member(
+            "ghost",
             agent_type="general-purpose",
             model="claude-sonnet-4-6",
-            joined_at=FIXED_MS,
-            tmux_pane_id="",
+            backend_id="",
             cwd="",
         )
         with pytest.raises(FileNotFoundError):
@@ -242,13 +229,12 @@ class TestColorAllocation:
         for i in range(8):
             color = manager.next_color()
             colors.append(color)
-            member = TeamMember(
+            member = make_member(
+                f"agent-{i}",
                 agent_id=f"agent-{i}@test-team",
-                name=f"agent-{i}",
                 agent_type="general-purpose",
                 model="claude-sonnet-4-6",
-                joined_at=FIXED_MS,
-                tmux_pane_id=f"%{i + 10}",
+                backend_id=f"%{i + 10}",
                 cwd="/tmp",
             )
             await manager.add_member(member)
@@ -261,13 +247,12 @@ class TestColorAllocation:
         await manager.create()
         # 添加 8 个成员（加上 lead 共 9 个）
         for i in range(8):
-            member = TeamMember(
+            member = make_member(
+                f"agent-{i}",
                 agent_id=f"agent-{i}@test-team",
-                name=f"agent-{i}",
                 agent_type="general-purpose",
                 model="claude-sonnet-4-6",
-                joined_at=FIXED_MS,
-                tmux_pane_id=f"%{i + 10}",
+                backend_id=f"%{i + 10}",
                 cwd="/tmp",
             )
             await manager.add_member(member)
@@ -289,14 +274,11 @@ class TestTeamRemoveMember:
     async def test_remove_existing_member(self, manager: TeamManager) -> None:
         """移除已有成员后 members 数量减少。"""
         await manager.create()
-        member = TeamMember(
-            agent_id="temp@test-team",
-            name="temp",
+        member = make_member(
+            "temp",
             agent_type="general-purpose",
             model="claude-sonnet-4-6",
-            joined_at=FIXED_MS,
-            tmux_pane_id="%3",
-            cwd="/workspace",
+            backend_id="%3",
         )
         await manager.add_member(member)
         assert len(manager.list_members()) == 2
@@ -435,25 +417,23 @@ class TestMemberUniqueness:
     async def test_duplicate_name_raises_value_error(self, manager: TeamManager) -> None:
         """重复添加同名成员应抛出 ValueError。"""
         await manager.create()
-        member = TeamMember(
+        member = make_member(
+            "dup-agent",
             agent_id="dup@test-team",
-            name="dup-agent",
             agent_type="general-purpose",
             model="claude-sonnet-4-6",
-            joined_at=FIXED_MS,
-            tmux_pane_id="%10",
+            backend_id="%10",
             cwd="/tmp",
         )
         await manager.add_member(member)
 
         # 再次添加相同名称
-        duplicate = TeamMember(
+        duplicate = make_member(
+            "dup-agent",  # 同名,
             agent_id="dup-2@test-team",
-            name="dup-agent",  # 同名
             agent_type="general-purpose",
             model="claude-sonnet-4-6",
-            joined_at=FIXED_MS,
-            tmux_pane_id="%11",
+            backend_id="%11",
             cwd="/tmp",
         )
         with pytest.raises(ValueError, match="already exists"):
@@ -463,25 +443,23 @@ class TestMemberUniqueness:
     async def test_duplicate_does_not_corrupt_config(self, manager: TeamManager) -> None:
         """重复添加失败后 config.json 不被污染。"""
         await manager.create()
-        member = TeamMember(
+        member = make_member(
+            "worker",
             agent_id="w@test-team",
-            name="worker",
             agent_type="general-purpose",
             model="claude-sonnet-4-6",
-            joined_at=FIXED_MS,
-            tmux_pane_id="%10",
+            backend_id="%10",
             cwd="/tmp",
         )
         await manager.add_member(member)
         count_before = len(manager.list_members())
 
-        duplicate = TeamMember(
+        duplicate = make_member(
+            "worker",
             agent_id="w2@test-team",
-            name="worker",
             agent_type="general-purpose",
             model="claude-sonnet-4-6",
-            joined_at=FIXED_MS,
-            tmux_pane_id="%11",
+            backend_id="%11",
             cwd="/tmp",
         )
         with pytest.raises(ValueError):
@@ -516,13 +494,12 @@ class TestColorCrossInstanceStability:
     ) -> None:
         """实例 A 添加成员后，实例 B 能感知到颜色变化。"""
         await manager.create()
-        member = TeamMember(
+        member = make_member(
+            "agent-x",
             agent_id="x@test-team",
-            name="agent-x",
             agent_type="general-purpose",
             model="claude-sonnet-4-6",
-            joined_at=FIXED_MS,
-            tmux_pane_id="%10",
+            backend_id="%10",
             cwd="/tmp",
         )
         await manager.add_member(member)
@@ -622,7 +599,7 @@ class TestRegisterMember:
         assert found.agent_type == "general-purpose"
         assert found.model == "claude-sonnet-4-6"
         assert found.is_active is False
-        assert found.tmux_pane_id == ""
+        assert found.backend_id == ""
         assert found.color is not None
 
         # 返回值一致

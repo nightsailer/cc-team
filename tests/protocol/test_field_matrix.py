@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from conftest import make_member
+
 from cc_team._serialization import (
     inbox_message_to_dict,
     task_file_to_dict,
@@ -22,14 +24,17 @@ class TestLeadMemberFieldMatrix:
     """Lead 成员字段存在性。"""
 
     def _make_lead(self) -> TeamMember:
-        return TeamMember(
+        return make_member(
+            "team-lead",
             agent_id="team-lead@t",
-            name="team-lead",
             agent_type="team-lead",
             model="m",
             joined_at=1000,
-            tmux_pane_id="",
+            backend_id="",
             cwd="/",
+            color=None,
+            is_active=None,
+            backend_type=None,
         )
 
     def test_lead_no_color(self) -> None:
@@ -52,7 +57,7 @@ class TestLeadMemberFieldMatrix:
         d = to_json_dict(self._make_lead())
         assert "isActive" not in d
 
-    def test_lead_tmux_pane_id_empty_string(self) -> None:
+    def test_lead_backend_id_empty_string(self) -> None:
         """Lead tmuxPaneId 为空字符串，不是 null/缺失。"""
         d = to_json_dict(self._make_lead())
         assert d["tmuxPaneId"] == ""
@@ -62,19 +67,15 @@ class TestTeammateMemberFieldMatrix:
     """Teammate 成员含全部 13 个字段。"""
 
     def test_teammate_has_all_13_fields(self) -> None:
-        mate = TeamMember(
+        mate = make_member(
+            "r",
             agent_id="r@t",
-            name="r",
-            agent_type="general-purpose",
             model="m",
             joined_at=1000,
-            tmux_pane_id="%14",
+            backend_id="%14",
             cwd="/",
             prompt="Work",
-            color="blue",
             plan_mode_required=False,
-            backend_type="tmux",
-            is_active=True,
         )
         d = to_json_dict(mate)
         expected_keys = {

@@ -16,12 +16,11 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from conftest import FIXED_MS
+from conftest import make_member
 
 import cc_team.paths as paths_mod
 from cc_team.cli import _build_parser, main
 from cc_team.team_manager import TeamManager
-from cc_team.types import TeamMember
 
 # isolated_home fixture 由 tests/conftest.py 提供
 
@@ -137,7 +136,7 @@ class TestAgentSpawn:
         # 成员应已注册
         member = team.get_member("dev")
         assert member is not None
-        assert member.tmux_pane_id == "%42"
+        assert member.backend_id == "%42"
 
         # inbox 应有初始 prompt
         inbox_path = paths_mod.inbox_path("test-team", "dev")
@@ -220,7 +219,7 @@ class TestAgentRegister:
         member = team.get_member("bot1")
         assert member is not None
         assert member.is_active is False
-        assert member.tmux_pane_id == ""
+        assert member.backend_id == ""
         assert member.color is not None
 
         # inbox 应存在且为空数组
@@ -351,16 +350,12 @@ class TestAgentKill:
     async def test_kill_normal_flow(self, team: TeamManager, isolated_home: Path) -> None:
         """正常 kill 流程：kill_pane + remove_member。"""
         # 先添加一个成员
-        member = TeamMember(
-            agent_id="victim@test-team",
-            name="victim",
+        member = make_member(
+            "victim",
             agent_type="general-purpose",
             model="claude-sonnet-4-6",
-            joined_at=FIXED_MS,
-            tmux_pane_id="%99",
+            backend_id="%99",
             cwd="/tmp",
-            is_active=True,
-            backend_type="tmux",
         )
         await team.add_member(member)
 
@@ -391,16 +386,13 @@ class TestAgentKill:
         self, team: TeamManager, isolated_home: Path
     ) -> None:
         """kill_pane 异常时仍应从团队移除成员。"""
-        member = TeamMember(
+        member = make_member(
+            "dead-agent",
             agent_id="dead@test-team",
-            name="dead-agent",
             agent_type="general-purpose",
             model="claude-sonnet-4-6",
-            joined_at=FIXED_MS,
-            tmux_pane_id="%88",
+            backend_id="%88",
             cwd="/tmp",
-            is_active=True,
-            backend_type="tmux",
         )
         await team.add_member(member)
 
@@ -604,7 +596,7 @@ class TestTeamTakeover:
         # TL backend_id should be updated
         lead = team.get_member("team-lead")
         assert lead is not None
-        assert lead.tmux_pane_id == "%50"
+        assert lead.backend_id == "%50"
 
         captured = capsys.readouterr()
         assert "Takeover complete" in captured.out
@@ -617,7 +609,7 @@ class TestTeamTakeover:
     ) -> None:
         """TL 已运行且无 --force 时 exit(1)。"""
         # Update TL's backend_id first
-        await team.update_member("team-lead", tmux_pane_id="%42")
+        await team.update_member("team-lead", backend_id="%42")
 
         parser = _build_parser()
         args = parser.parse_args(
@@ -643,7 +635,7 @@ class TestTeamTakeover:
         isolated_home: Path,
     ) -> None:
         """--force 强制接管已运行的 TL。"""
-        await team.update_member("team-lead", tmux_pane_id="%42")
+        await team.update_member("team-lead", backend_id="%42")
 
         parser = _build_parser()
         args = parser.parse_args(
@@ -669,7 +661,7 @@ class TestTeamTakeover:
 
         lead = team.get_member("team-lead")
         assert lead is not None
-        assert lead.tmux_pane_id == "%60"
+        assert lead.backend_id == "%60"
 
 
 # ── team relay ─────────────────────────────────────────────
@@ -736,7 +728,7 @@ class TestTeamRelay:
         # TL pane should be updated
         lead = team.get_member("team-lead")
         assert lead is not None
-        assert lead.tmux_pane_id == "%70"
+        assert lead.backend_id == "%70"
 
         captured = capsys.readouterr()
         assert "Relay complete" in captured.out
@@ -750,17 +742,14 @@ class TestTeamRelay:
     ) -> None:
         """Post-relay sync should recover inactive-but-alive agents."""
         # Add an agent with isActive=false (simulating TL sync pollution)
-        member = TeamMember(
+        member = make_member(
+            "worker-1",
             agent_id="w@test-team",
-            name="worker-1",
             agent_type="general-purpose",
             model="claude-sonnet-4-6",
-            joined_at=FIXED_MS,
-            tmux_pane_id="%68",
+            backend_id="%68",
             cwd="/tmp",
-            color="blue",
-            is_active=False,  # isActive pollution
-            backend_type="tmux",
+            is_active=False,  # isActive pollution,
         )
         await team.add_member(member)
 
@@ -929,31 +918,24 @@ class TestAgentSync:
     ) -> None:
         """Normal sync: alive → synced, dead → inactive."""
         # Add an active agent
-        member = TeamMember(
+        member = make_member(
+            "worker-1",
             agent_id="w@test-team",
-            name="worker-1",
             agent_type="general-purpose",
             model="claude-sonnet-4-6",
-            joined_at=FIXED_MS,
-            tmux_pane_id="%68",
+            backend_id="%68",
             cwd="/tmp",
-            color="blue",
-            is_active=True,
-            backend_type="tmux",
         )
         await team.add_member(member)
         # Add a dead agent
-        dead_member = TeamMember(
+        dead_member = make_member(
+            "dead-agent",
             agent_id="d@test-team",
-            name="dead-agent",
             agent_type="general-purpose",
             model="claude-sonnet-4-6",
-            joined_at=FIXED_MS,
-            tmux_pane_id="%55",
+            backend_id="%55",
             cwd="/tmp",
             color="green",
-            is_active=True,
-            backend_type="tmux",
         )
         await team.add_member(dead_member)
 
@@ -996,17 +978,13 @@ class TestAgentSync:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """--json output includes synced, recovered, and inactive."""
-        member = TeamMember(
+        member = make_member(
+            "worker-1",
             agent_id="w@test-team",
-            name="worker-1",
             agent_type="general-purpose",
             model="claude-sonnet-4-6",
-            joined_at=FIXED_MS,
-            tmux_pane_id="%68",
+            backend_id="%68",
             cwd="/tmp",
-            color="blue",
-            is_active=True,
-            backend_type="tmux",
         )
         await team.add_member(member)
 
@@ -1042,17 +1020,15 @@ class TestAgentSync:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """Alive agent with isActive=false should be recovered."""
-        member = TeamMember(
+        member = make_member(
+            "revived",
             agent_id="r@test-team",
-            name="revived",
             agent_type="general-purpose",
             model="claude-sonnet-4-6",
-            joined_at=FIXED_MS,
-            tmux_pane_id="%77",
+            backend_id="%77",
             cwd="/tmp",
             color="purple",
-            is_active=False,  # isActive pollution
-            backend_type="tmux",
+            is_active=False,  # isActive pollution,
         )
         await team.add_member(member)
 
@@ -1089,17 +1065,15 @@ class TestAgentSync:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """--json output should include recovered agents."""
-        member = TeamMember(
+        member = make_member(
+            "revived",
             agent_id="r@test-team",
-            name="revived",
             agent_type="general-purpose",
             model="claude-sonnet-4-6",
-            joined_at=FIXED_MS,
-            tmux_pane_id="%77",
+            backend_id="%77",
             cwd="/tmp",
             color="purple",
-            is_active=False,  # isActive pollution
-            backend_type="tmux",
+            is_active=False,  # isActive pollution,
         )
         await team.add_member(member)
 
@@ -1141,18 +1115,14 @@ class TestAgentRelay:
     ) -> None:
         """agent relay should exit old process and respawn with preserved config."""
         # Add an active agent
-        member = TeamMember(
+        member = make_member(
+            "worker-1",
             agent_id="w@test-team",
-            name="worker-1",
             agent_type="general-purpose",
             model="claude-sonnet-4-6",
-            joined_at=FIXED_MS,
-            tmux_pane_id="%68",
+            backend_id="%68",
             cwd="/tmp",
-            color="blue",
-            is_active=True,
             prompt="Original task",
-            backend_type="tmux",
         )
         await team.add_member(member)
 
@@ -1190,7 +1160,7 @@ class TestAgentRelay:
         # New member should exist in config
         m = team.get_member("worker-1")
         assert m is not None
-        assert m.tmux_pane_id == "%75"
+        assert m.backend_id == "%75"
         assert m.is_active is True
 
     @pytest.mark.asyncio
@@ -1201,18 +1171,14 @@ class TestAgentRelay:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """agent relay --prompt should use the new prompt."""
-        member = TeamMember(
+        member = make_member(
+            "worker-1",
             agent_id="w@test-team",
-            name="worker-1",
             agent_type="general-purpose",
             model="claude-sonnet-4-6",
-            joined_at=FIXED_MS,
-            tmux_pane_id="%68",
+            backend_id="%68",
             cwd="/tmp",
-            color="blue",
-            is_active=True,
             prompt="Original task",
-            backend_type="tmux",
         )
         await team.add_member(member)
 

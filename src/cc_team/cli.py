@@ -159,7 +159,7 @@ async def _spawn_new_lead(
         backend_id=backend_id,
     )
     new_bid = await pm.spawn_lead(options, parent_session_id=new_sid)
-    await mgr.update_member(TEAM_LEAD_AGENT_TYPE, tmux_pane_id=new_bid)
+    await mgr.update_member(TEAM_LEAD_AGENT_TYPE, backend_id=new_bid)
     return new_bid, new_sid
 
 
@@ -172,17 +172,17 @@ async def _cmd_team_takeover(args: argparse.Namespace) -> None:
 
     # 检查 TL 是否已运行（从已读取的 config 中查找）
     lead = next((m for m in config.members if m.name == TEAM_LEAD_AGENT_TYPE), None)
-    if lead and lead.tmux_pane_id:
+    if lead and lead.backend_id:
         tmux = TmuxManager()
-        if await tmux.is_pane_alive(lead.tmux_pane_id):
+        if await tmux.is_pane_alive(lead.backend_id):
             if not getattr(args, "force", False):
                 _error(
-                    f"Team Lead is still running in pane {lead.tmux_pane_id}. "
+                    f"Team Lead is still running in pane {lead.backend_id}. "
                     "Use --force to override."
                 )
                 sys.exit(1)
             else:
-                print(f"Warning: overriding existing TL in pane {lead.tmux_pane_id}")
+                print(f"Warning: overriding existing TL in pane {lead.backend_id}")
 
     backend_id, new_sid = await _spawn_new_lead(
         mgr,
@@ -225,8 +225,8 @@ async def _cmd_team_relay(args: argparse.Namespace) -> None:
 
     # Step 1: graceful exit of old TL
     lead = next((m for m in config.members if m.name == TEAM_LEAD_AGENT_TYPE), None)
-    if lead and lead.tmux_pane_id:
-        await _graceful_exit_pane(lead.tmux_pane_id, args.timeout, label="TL pane")
+    if lead and lead.backend_id:
+        await _graceful_exit_pane(lead.backend_id, args.timeout, label="TL pane")
 
     # Step 2: rotate session + spawn new TL
     new_bid, new_sid = await _spawn_new_lead(mgr, name, args.model)
@@ -249,7 +249,7 @@ async def _cmd_team_relay(args: argparse.Namespace) -> None:
             {
                 "old_session": old_session,
                 "new_session": new_sid,
-                "old_backend_id": lead.tmux_pane_id if lead else "",
+                "old_backend_id": lead.backend_id if lead else "",
                 "new_backend_id": new_bid,
                 "agents": {
                     "synced": result.active,
@@ -261,7 +261,7 @@ async def _cmd_team_relay(args: argparse.Namespace) -> None:
     else:
         print("Relay complete:")
         print(f"  Session: {old_session[:8]} → {new_sid[:8]}")
-        old_bid = lead.tmux_pane_id if lead else "N/A"
+        old_bid = lead.backend_id if lead else "N/A"
         print(f"  Backend: {old_bid} → {new_bid}")
         total_active = len(result.active)
         print(
@@ -400,7 +400,7 @@ async def _cmd_agent_status(args: argparse.Namespace) -> None:
         print(f"Model:  {member.model}")
         print(f"Active: {'yes' if member.is_active else 'no'}")
         print(f"Color:  {member.color or 'none'}")
-        print(f"Pane:   {member.tmux_pane_id or 'N/A'}")
+        print(f"Backend: {member.backend_id or 'N/A'}")
 
 
 async def _cmd_agent_shutdown(args: argparse.Namespace) -> None:
@@ -427,11 +427,11 @@ async def _cmd_agent_sync(args: argparse.Namespace) -> None:
 
     if not args.use_json and not args.quiet:
         for name in result.active:
-            bid = result.members[name].tmux_pane_id
-            print(f"{name}: pane {bid} alive → synced")
+            bid = result.members[name].backend_id
+            print(f"{name}: backend {bid} alive → synced")
         for name in result.recovered:
-            bid = result.members[name].tmux_pane_id
-            print(f"{name}: pane {bid} alive → recovered")
+            bid = result.members[name].backend_id
+            print(f"{name}: backend {bid} alive → recovered")
         for name in result.newly_inactive:
             print(f"{name}: dead → marked inactive")
 
@@ -466,11 +466,11 @@ async def _cmd_agent_relay(args: argparse.Namespace) -> None:
         _error(f"Member '{args.name}' not found in team '{team}'")
         sys.exit(1)
 
-    if not member.tmux_pane_id:
+    if not member.backend_id:
         _error(f"Agent '{args.name}' has no backend process to relay")
         sys.exit(1)
 
-    old_backend = member.tmux_pane_id
+    old_backend = member.backend_id
 
     # Step 1: graceful exit of old agent
     await _graceful_exit_pane(old_backend, args.timeout, label="Agent pane")
@@ -531,10 +531,10 @@ async def _cmd_agent_kill(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     # 终止 tmux pane
-    if member.tmux_pane_id:
+    if member.backend_id:
         tmux = TmuxManager()
         with contextlib.suppress(Exception):
-            await tmux.kill_pane(member.tmux_pane_id)
+            await tmux.kill_pane(member.backend_id)
 
     # 从团队中移除成员
     await mgr.remove_member(args.name)

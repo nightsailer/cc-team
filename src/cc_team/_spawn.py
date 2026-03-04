@@ -84,7 +84,7 @@ async def spawn_agent_workflow(
         options.name,
         is_active=True,
         prompt=options.prompt,
-        tmux_pane_id=backend_id,
+        backend_id=backend_id,
     )
 
     return backend_id, color

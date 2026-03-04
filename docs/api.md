@@ -750,7 +750,7 @@ class TeamMember:
     agent_type: str     # "team-lead", "general-purpose", etc.
     model: str          # LLM model ID
     joined_at: int      # Unix millisecond timestamp
-    tmux_pane_id: str   # tmux pane ID (empty for lead)
+    backend_id: str    # backend-specific process identifier (empty for lead)
     cwd: str            # Working directory
     subscriptions: list[str] = []  # Reserved, always empty
 

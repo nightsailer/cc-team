@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+from conftest import make_member
 
 from cc_team._serialization import (
     atomic_write_json,
@@ -43,15 +44,7 @@ class TestKeyMapping:
 
     def test_snake_to_camel_basic(self) -> None:
         """agent_id → agentId。"""
-        member = TeamMember(
-            agent_id="a@t",
-            name="a",
-            agent_type="general-purpose",
-            model="m",
-            joined_at=0,
-            tmux_pane_id="",
-            cwd="/",
-        )
+        member = make_member("a", agent_id="a@t", model="m", joined_at=0, backend_id="", cwd="/")
         d = to_json_dict(member)
         assert "agentId" in d
         assert "agent_id" not in d
@@ -163,14 +156,17 @@ class TestJsonDictConversion:
             lead_agent_id="team-lead@t",
             lead_session_id="uuid",
             members=[
-                TeamMember(
+                make_member(
+                    "team-lead",
                     agent_id="team-lead@t",
-                    name="team-lead",
                     agent_type="team-lead",
                     model="m",
                     joined_at=1000,
-                    tmux_pane_id="",
+                    backend_id="",
                     cwd="/",
+                    color=None,
+                    is_active=None,
+                    backend_type=None,
                 ),
             ],
         )
@@ -188,16 +184,13 @@ class TestJsonDictConversion:
             lead_agent_id="team-lead@t",
             lead_session_id="uuid",
             members=[
-                TeamMember(
+                make_member(
+                    "worker",
                     agent_id="worker@t",
-                    name="worker",
-                    agent_type="general-purpose",
                     model="sonnet",
                     joined_at=2000,
-                    tmux_pane_id="%5",
+                    backend_id="%5",
                     cwd="/home",
-                    is_active=True,
-                    backend_type="tmux",
                 ),
             ],
         )
@@ -211,7 +204,7 @@ class TestJsonDictConversion:
         assert "joinedAt" in member_dict
         assert "joined_at" not in member_dict
         assert "tmuxPaneId" in member_dict
-        assert "tmux_pane_id" not in member_dict
+        assert "backend_id" not in member_dict
         assert "isActive" in member_dict
         assert "is_active" not in member_dict
         assert "backendType" in member_dict
@@ -226,16 +219,17 @@ class TestJsonDictConversion:
             lead_agent_id="team-lead@t",
             lead_session_id="uuid",
             members=[
-                TeamMember(
+                make_member(
+                    "team-lead",
                     agent_id="team-lead@t",
-                    name="team-lead",
                     agent_type="team-lead",
                     model="m",
                     joined_at=1000,
-                    tmux_pane_id="",
+                    backend_id="",
                     cwd="/",
-                    # prompt, color, plan_mode_required, backend_type, is_active
-                    # are all None by default
+                    color=None,
+                    is_active=None,
+                    backend_type=None,
                 ),
             ],
         )

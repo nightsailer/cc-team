@@ -17,6 +17,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from conftest import make_member
 
 import cc_team._serialization as ser_mod
 import cc_team.inbox as inbox_mod
@@ -675,38 +676,33 @@ class TestAttach:
         """attach recovers alive agents regardless of isActive flag (bidirectional sync)."""
         from cc_team._serialization import now_ms
         from cc_team.team_manager import TeamManager
-        from cc_team.types import TeamMember
 
         mgr = TeamManager("test-team")
         await mgr.create(lead_session_id="s1")
         # Active agent (pane alive)
         await mgr.add_member(
-            TeamMember(
+            make_member(
+                "active-agent",
                 agent_id="a@test-team",
-                name="active-agent",
                 agent_type="general-purpose",
                 model="claude-sonnet-4-6",
                 joined_at=now_ms(),
-                tmux_pane_id="%10",
+                backend_id="%10",
                 cwd="/tmp",
-                color="blue",
-                is_active=True,
-                backend_type="tmux",
             )
         )
         # Inactive agent (pane alive → should be recovered)
         await mgr.add_member(
-            TeamMember(
+            make_member(
+                "inactive-agent",
                 agent_id="i@test-team",
-                name="inactive-agent",
                 agent_type="general-purpose",
                 model="claude-sonnet-4-6",
                 joined_at=now_ms(),
-                tmux_pane_id="%11",
+                backend_id="%11",
                 cwd="/tmp",
                 color="green",
                 is_active=False,
-                backend_type="tmux",
             )
         )
 
@@ -805,7 +801,7 @@ class TestSpawnUsesRegisterMember:
         # 应有颜色
         assert member.color is not None
         # pane_id 应已更新
-        assert member.tmux_pane_id == "%20"
+        assert member.backend_id == "%20"
         # prompt 应已保存
         assert member.prompt == "Work"
         # handle 正常
@@ -843,22 +839,17 @@ class TestSyncAgents:
     ) -> None:
         """存活 pane 应恢复为 handle。"""
         from cc_team.team_manager import TeamManager
-        from cc_team.types import TeamMember
 
         mgr = TeamManager("test-team")
         await mgr.create(lead_session_id="s1")
         await mgr.add_member(
-            TeamMember(
+            make_member(
+                "worker",
                 agent_id="w@test-team",
-                name="worker",
                 agent_type="general-purpose",
                 model="claude-sonnet-4-6",
-                joined_at=FIXED_MS,
-                tmux_pane_id="%68",
+                backend_id="%68",
                 cwd="/tmp",
-                color="blue",
-                is_active=True,
-                backend_type="tmux",
             )
         )
 
@@ -888,22 +879,18 @@ class TestSyncAgents:
     ) -> None:
         """死亡 pane 应标记为 inactive。"""
         from cc_team.team_manager import TeamManager
-        from cc_team.types import TeamMember
 
         mgr = TeamManager("test-team")
         await mgr.create(lead_session_id="s1")
         await mgr.add_member(
-            TeamMember(
+            make_member(
+                "dead-agent",
                 agent_id="d@test-team",
-                name="dead-agent",
                 agent_type="general-purpose",
                 model="claude-sonnet-4-6",
-                joined_at=FIXED_MS,
-                tmux_pane_id="%55",
+                backend_id="%55",
                 cwd="/tmp",
                 color="green",
-                is_active=True,
-                backend_type="tmux",
             )
         )
 
@@ -938,22 +925,19 @@ class TestSyncAgents:
     ) -> None:
         """Alive pane with isActive=false should be recovered to active."""
         from cc_team.team_manager import TeamManager
-        from cc_team.types import TeamMember
 
         mgr = TeamManager("test-team")
         await mgr.create(lead_session_id="s1")
         await mgr.add_member(
-            TeamMember(
+            make_member(
+                "revived",
                 agent_id="r@test-team",
-                name="revived",
                 agent_type="general-purpose",
                 model="claude-sonnet-4-6",
-                joined_at=FIXED_MS,
-                tmux_pane_id="%77",
+                backend_id="%77",
                 cwd="/tmp",
                 color="purple",
-                is_active=False,  # isActive pollution
-                backend_type="tmux",
+                is_active=False,  # isActive pollution,
             )
         )
 
@@ -983,22 +967,19 @@ class TestSyncAgents:
     ) -> None:
         """Dead pane with isActive=false should be skipped (no redundant write)."""
         from cc_team.team_manager import TeamManager
-        from cc_team.types import TeamMember
 
         mgr = TeamManager("test-team")
         await mgr.create(lead_session_id="s1")
         await mgr.add_member(
-            TeamMember(
+            make_member(
+                "ghost",
                 agent_id="g@test-team",
-                name="ghost",
                 agent_type="general-purpose",
                 model="claude-sonnet-4-6",
-                joined_at=FIXED_MS,
-                tmux_pane_id="%44",
+                backend_id="%44",
                 cwd="/tmp",
                 color="red",
-                is_active=False,  # already inactive
-                backend_type="tmux",
+                is_active=False,  # already inactive,
             )
         )
 
@@ -1030,37 +1011,29 @@ class TestSyncAgents:
     ) -> None:
         """attach 使用 sync_agents，ghost pane 不在 handles 中。"""
         from cc_team.team_manager import TeamManager
-        from cc_team.types import TeamMember
 
         mgr = TeamManager("test-team")
         await mgr.create(lead_session_id="s1")
         # 一个存活 + 一个死亡
         await mgr.add_member(
-            TeamMember(
+            make_member(
+                "alive-agent",
                 agent_id="alive@test-team",
-                name="alive-agent",
                 agent_type="general-purpose",
                 model="claude-sonnet-4-6",
-                joined_at=FIXED_MS,
-                tmux_pane_id="%10",
+                backend_id="%10",
                 cwd="/tmp",
-                color="blue",
-                is_active=True,
-                backend_type="tmux",
             )
         )
         await mgr.add_member(
-            TeamMember(
+            make_member(
+                "ghost-agent",
                 agent_id="ghost@test-team",
-                name="ghost-agent",
                 agent_type="general-purpose",
                 model="claude-sonnet-4-6",
-                joined_at=FIXED_MS,
-                tmux_pane_id="%99",
+                backend_id="%99",
                 cwd="/tmp",
                 color="green",
-                is_active=True,
-                backend_type="tmux",
             )
         )
 
