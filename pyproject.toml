@@ -5,6 +5,25 @@ description = "Python library + CLI for Claude Code multi-agent team orchestrati
 requires-python = ">=3.10"
 dependencies = []
 license = "MIT"
+authors = [{name = "Pan Fan"}]
+readme = "README.md"
+keywords = ["claude-code", "multi-agent", "orchestration", "cli", "asyncio", "tmux"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/nightsailer/cc-team"
+Repository = "https://github.com/nightsailer/cc-team"
+Issues = "https://github.com/nightsailer/cc-team/issues"
 
 [project.scripts]
 cct = "cc_team.cli:main"

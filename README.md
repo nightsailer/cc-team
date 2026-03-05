@@ -1,3 +1,7 @@
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![PyPI version](https://img.shields.io/pypi/v/cc-team.svg)](https://pypi.org/project/cc-team/)
+
 English | [中文](README.zh.md)
 
 # cc-team
@@ -20,11 +24,17 @@ Compatible with the [Claude Code](https://docs.anthropic.com/en/docs/claude-code
 ## Installation
 
 ```bash
-# From source (recommended during development)
-pip install -e .
+# Run directly without installing (recommended for CLI users)
+uvx --from cc-team cct --help
 
-# Or with uv
-uv pip install -e .
+# Or install globally with uv
+uv tool install cc-team
+
+# Or install with pip
+pip install cc-team
+
+# From source (for development)
+pip install -e .
 ```
 
 **Requirements:** Python 3.10+ and [tmux](https://github.com/tmux/tmux) installed on the system.
@@ -76,6 +86,13 @@ asyncio.run(main())
 ```
 
 ### CLI (`cct`)
+
+All `cct` commands can also be run via `uvx` without installation:
+
+```bash
+# uvx equivalent: replace `cct` with `uvx --from cc-team cct`
+uvx --from cc-team cct --team-name my-project team create --description "Code analysis team"
+```
 
 ```bash
 # Create a team
@@ -150,6 +167,9 @@ All commands support `--json` for machine-readable output:
 
 ```bash
 cct --team-name my-project --json task list
+
+# Same with uvx
+uvx --from cc-team cct --team-name my-project --json task list
 ```
 
 ## Architecture

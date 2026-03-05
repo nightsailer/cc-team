@@ -1,3 +1,7 @@
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![PyPI version](https://img.shields.io/pypi/v/cc-team.svg)](https://pypi.org/project/cc-team/)
+
 [English](README.md) | 中文
 
 # cc-team
@@ -20,11 +24,17 @@
 ## 安装
 
 ```bash
-# 从源码安装（开发阶段推荐）
-pip install -e .
+# 免安装直接运行（CLI 用户推荐）
+uvx --from cc-team cct --help
 
-# 或使用 uv
-uv pip install -e .
+# 或全局安装
+uv tool install cc-team
+
+# 或使用 pip
+pip install cc-team
+
+# 从源码安装（开发阶段）
+pip install -e .
 ```
 
 **环境要求：** Python 3.10+ 以及系统已安装 [tmux](https://github.com/tmux/tmux)。
@@ -76,6 +86,13 @@ asyncio.run(main())
 ```
 
 ### CLI (`cct`)
+
+所有 `cct` 命令均可通过 `uvx` 免安装运行：
+
+```bash
+# uvx 等价写法：将 `cct` 替换为 `uvx --from cc-team cct`
+uvx --from cc-team cct --team-name my-project team create --description "Code analysis team"
+```
 
 ```bash
 # 创建团队
@@ -150,6 +167,9 @@ cct --team-name my-project agent sync
 
 ```bash
 cct --team-name my-project --json task list
+
+# uvx 等价写法
+uvx --from cc-team cct --team-name my-project --json task list
 ```
 
 ## 架构
