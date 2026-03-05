@@ -27,11 +27,14 @@ from cc_team.types import AgentBackend, SpawnAgentOptions, SpawnLeadOptions
 
 def _make_mock_tmux() -> MagicMock:
     """创建 mock TmuxManager。"""
+    from cc_team.tmux import PaneState
+
     mock = MagicMock(spec=TmuxManager)
     mock.split_window = AsyncMock(return_value="%20")
     mock.send_command = AsyncMock()
     mock.kill_pane = AsyncMock()
     mock.is_pane_alive = AsyncMock(return_value=True)
+    mock.detect_state = AsyncMock(return_value=PaneState.READY)
     return mock
 
 
@@ -746,3 +749,101 @@ class TestSpawnLead:
                 parent_session_id="s",
             )
         tmux.kill_pane.assert_not_awaited()
+
+
+# ── graceful_exit ────────────────────────────────────────────
+
+
+class TestGracefulExit:
+    """graceful_exit() tests."""
+
+    @pytest.mark.asyncio
+    async def test_sends_exit_and_polls(self) -> None:
+        """Sends /exit and polls until pane dies."""
+        tmux = _make_mock_tmux()
+        # First call: alive, second call: dead
+        tmux.is_pane_alive = AsyncMock(side_effect=[True, True, False])
+        pm = ProcessManager(tmux=tmux)
+
+        await pm.graceful_exit("%42", timeout=10)
+
+        tmux.send_command.assert_awaited_once()
+        # Verify /exit was sent
+        call_args = tmux.send_command.call_args
+        assert call_args[0][1] == "/exit"
+
+    @pytest.mark.asyncio
+    async def test_already_dead_returns_immediately(self) -> None:
+        """Pane already dead → returns without sending /exit."""
+        tmux = _make_mock_tmux()
+        tmux.is_pane_alive = AsyncMock(return_value=False)
+        pm = ProcessManager(tmux=tmux)
+
+        await pm.graceful_exit("%42", timeout=10)
+
+        tmux.send_command.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_timeout_raises(self) -> None:
+        """Pane stays alive past timeout → raises TimeoutError."""
+        tmux = _make_mock_tmux()
+        tmux.is_pane_alive = AsyncMock(return_value=True)
+        pm = ProcessManager(tmux=tmux)
+
+        with pytest.raises(TimeoutError, match="did not exit"):
+            await pm.graceful_exit("%42", timeout=1)
+
+
+# ── detect_ready ─────────────────────────────────────────────
+
+
+class TestDetectReady:
+    """detect_ready() tests."""
+
+    @pytest.mark.asyncio
+    async def test_returns_true_on_ready(self) -> None:
+        """Returns True when pane reaches READY state."""
+        from cc_team.tmux import PaneState
+
+        tmux = _make_mock_tmux()
+        tmux.detect_state = AsyncMock(return_value=PaneState.READY)
+        pm = ProcessManager(tmux=tmux)
+
+        result = await pm.detect_ready("%42", timeout=10)
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_returns_true_on_waiting_input(self) -> None:
+        """Returns True when pane reaches WAITING_INPUT state."""
+        from cc_team.tmux import PaneState
+
+        tmux = _make_mock_tmux()
+        tmux.detect_state = AsyncMock(return_value=PaneState.WAITING_INPUT)
+        pm = ProcessManager(tmux=tmux)
+
+        result = await pm.detect_ready("%42", timeout=10)
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_returns_true_on_idle(self) -> None:
+        """Returns True when pane reaches IDLE state."""
+        from cc_team.tmux import PaneState
+
+        tmux = _make_mock_tmux()
+        tmux.detect_state = AsyncMock(return_value=PaneState.IDLE)
+        pm = ProcessManager(tmux=tmux)
+
+        result = await pm.detect_ready("%42", timeout=10)
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_returns_false_on_timeout(self) -> None:
+        """Returns False when pane stays in ACTIVE state past timeout."""
+        from cc_team.tmux import PaneState
+
+        tmux = _make_mock_tmux()
+        tmux.detect_state = AsyncMock(return_value=PaneState.ACTIVE)
+        pm = ProcessManager(tmux=tmux)
+
+        result = await pm.detect_ready("%42", timeout=1)
+        assert result is False

@@ -1,0 +1,8 @@
+{
+  "name": "cc-team",
+  "description": "Context relay hooks for Claude Code",
+  "version": "0.1.0",
+  "author": {
+    "name": "cc-team"
+  }
+}

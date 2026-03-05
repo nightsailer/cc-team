@@ -1147,6 +1147,7 @@ class TestAgentRelay:
             mock_tmux.is_pane_alive = AsyncMock(return_value=False)  # already exited
             mock_pm = MockPM.return_value
             mock_pm.spawn = AsyncMock(return_value="%75")
+            mock_pm.graceful_exit = AsyncMock()
 
             await args.func(args)
 
@@ -1205,6 +1206,7 @@ class TestAgentRelay:
             mock_tmux.is_pane_alive = AsyncMock(return_value=False)
             mock_pm = MockPM.return_value
             mock_pm.spawn = AsyncMock(return_value="%80")
+            mock_pm.graceful_exit = AsyncMock()
 
             await args.func(args)
 

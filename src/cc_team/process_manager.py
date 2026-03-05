@@ -12,14 +12,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import functools
 import os
 import shlex
 import shutil
+import time
 
 from cc_team.exceptions import AgentNotFoundError, SpawnError, TmuxError
-from cc_team.tmux import TmuxManager
+from cc_team.tmux import ClearMode, PaneState, TmuxManager
 from cc_team.types import TEAM_LEAD_AGENT_TYPE, PermissionMode, SpawnAgentOptions, SpawnLeadOptions
 
 # 团队协议激活必需的环境变量前缀
@@ -146,6 +148,43 @@ class ProcessManager:
         """
         pane_id = self._require_pane(agent_name)
         await self._tmux.send_command(pane_id, text)
+
+    # ── Graceful exit / readiness detection ──────────────────
+
+    async def graceful_exit(self, backend_id: str, *, timeout: int = 30) -> None:
+        """Send /exit and poll until the pane dies.
+
+        Raises:
+            TimeoutError: pane did not exit within *timeout* seconds.
+        """
+        if not await self._tmux.is_pane_alive(backend_id):
+            return
+        await self._tmux.send_command(
+            backend_id,
+            "/exit",
+            clear_mode=ClearMode.ESCAPE,
+        )
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if not await self._tmux.is_pane_alive(backend_id):
+                return
+            await asyncio.sleep(1)
+        raise TimeoutError(f"Pane {backend_id} did not exit within {timeout}s")
+
+    async def detect_ready(self, backend_id: str, *, timeout: int = 60) -> bool:
+        """Poll detect_state until READY/WAITING_INPUT/IDLE or timeout.
+
+        Returns:
+            True if a ready-like state was detected, False on timeout.
+        """
+        ready_states = {PaneState.READY, PaneState.WAITING_INPUT, PaneState.IDLE}
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            state = await self._tmux.detect_state(backend_id)
+            if state in ready_states:
+                return True
+            await asyncio.sleep(1)
+        return False
 
     # ── CLI 参数构建 ────────────────────────────────────────
 

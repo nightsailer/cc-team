@@ -341,6 +341,18 @@ class AgentBackend(Protocol):
         """
         ...
 
+    async def graceful_exit(self, backend_id: str, *, timeout: int = 30) -> None:
+        """Send /exit and wait for process to terminate.
+
+        Raises:
+            TimeoutError: process did not exit within *timeout* seconds.
+        """
+        ...
+
+    async def detect_ready(self, backend_id: str, *, timeout: int = 60) -> bool:
+        """Poll detect_state(), return True when READY/WAITING_INPUT/IDLE."""
+        ...
+
 
 # ── 配置选项 ────────────────────────────────────────────────
 

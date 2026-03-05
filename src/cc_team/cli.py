@@ -21,16 +21,19 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import functools
 import json
 import os
+import pathlib
 import sys
-import time
 import uuid
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from cc_team.types import DEFAULT_MODEL
 
 if TYPE_CHECKING:
+    from cc_team._context_relay import RelayRequest, RelayResult
     from cc_team.team_manager import TeamManager
     from cc_team.types import TeamConfig, TeamMember
 
@@ -199,50 +202,107 @@ async def _cmd_team_takeover(args: argparse.Namespace) -> None:
 
 async def _graceful_exit_pane(pane_id: str, timeout: int, label: str = "pane") -> None:
     """Send /exit and poll until the pane dies, or exit(1) on timeout."""
-    from cc_team.tmux import TmuxManager
+    from cc_team.process_manager import ProcessManager
 
-    tmux = TmuxManager()
-    if not await tmux.is_pane_alive(pane_id):
-        return
-    await tmux.send_command(pane_id, "/exit")
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if not await tmux.is_pane_alive(pane_id):
-            return
-        await asyncio.sleep(1)
-    _error(f"{label} {pane_id} did not exit within {timeout}s")
-    sys.exit(1)
+    pm = ProcessManager()
+    try:
+        await pm.graceful_exit(pane_id, timeout=timeout)
+    except TimeoutError:
+        _error(f"{label} {pane_id} did not exit within {timeout}s")
+        sys.exit(1)
+
+
+def _build_relay_request(args: argparse.Namespace) -> RelayRequest:
+    """Build a RelayRequest from CLI args (shared by all relay handoff paths)."""
+    from cc_team._context_relay import RelayRequest
+
+    cct_sid = os.environ.get("CCT_SESSION_ID", str(uuid.uuid4()))
+    return RelayRequest(
+        cct_session_id=cct_sid,
+        handoff_path=args.handoff,
+        model=getattr(args, "model", DEFAULT_MODEL),
+        timeout=args.timeout,
+        cwd=os.getcwd(),
+    )
+
+
+def _print_relay_result(
+    args: argparse.Namespace,
+    result: RelayResult,
+    *,
+    label: str = "Relay",
+    extra_json: dict[str, object] | None = None,
+) -> None:
+    """Format and print a RelayResult (shared by all relay handoff paths)."""
+    if args.use_json:
+        data: dict[str, object] = {
+            "old_backend_id": result.old_backend_id,
+            "new_backend_id": result.new_backend_id,
+            "cct_session_id": result.cct_session_id,
+            "handoff_injected": result.handoff_injected,
+        }
+        if extra_json:
+            data.update(extra_json)
+        _json_out(data)
+    else:
+        old = result.old_backend_id or "N/A"
+        print(f"{label} complete:")
+        print(f"  Backend: {old} → {result.new_backend_id}")
+        print(f"  Handoff injected: {result.handoff_injected}")
 
 
 async def _cmd_team_relay(args: argparse.Namespace) -> None:
+    name = _require_team(args)
+
+    # When --handoff is provided, delegate to _context_relay.relay_lead
+    handoff = getattr(args, "handoff", None)
+    if handoff:
+        from cc_team._context_relay import relay_lead
+
+        request = _build_relay_request(args)
+        try:
+            result = await relay_lead(request, name)
+        except (FileNotFoundError, TimeoutError) as e:
+            _error(str(e))
+            sys.exit(1)
+        _print_relay_result(args, result, label="Team relay")
+        return
+
+    # Original logic (no handoff)
     from cc_team._sync import sync_member_states
     from cc_team.process_manager import ProcessManager
     from cc_team.types import TEAM_LEAD_AGENT_TYPE
 
-    name = _require_team(args)
     mgr, config = await _require_config(name)
     old_session = config.lead_session_id
 
     # Step 1: graceful exit of old TL
-    lead = next((m for m in config.members if m.name == TEAM_LEAD_AGENT_TYPE), None)
+    lead = next(
+        (m for m in config.members if m.name == TEAM_LEAD_AGENT_TYPE),
+        None,
+    )
     if lead and lead.backend_id:
-        await _graceful_exit_pane(lead.backend_id, args.timeout, label="TL pane")
+        await _graceful_exit_pane(
+            lead.backend_id,
+            args.timeout,
+            label="TL pane",
+        )
 
     # Step 2: rotate session + spawn new TL
     new_bid, new_sid = await _spawn_new_lead(mgr, name, args.model)
 
-    # Step 3: wait for new TL initialization + agent state recovery
+    # Step 3: wait for new TL init + agent state recovery
     _TL_INIT_WAIT_SECONDS = 5
     await asyncio.sleep(_TL_INIT_WAIT_SECONDS)
 
     pm = ProcessManager()
     fresh_config = mgr.read()
     if fresh_config:
-        result = await sync_member_states(mgr, pm, fresh_config)
+        sync_result = await sync_member_states(mgr, pm, fresh_config)
     else:
         from cc_team._sync import SyncResult
 
-        result = SyncResult()
+        sync_result = SyncResult()
 
     if args.use_json:
         _json_out(
@@ -252,9 +312,9 @@ async def _cmd_team_relay(args: argparse.Namespace) -> None:
                 "old_backend_id": lead.backend_id if lead else "",
                 "new_backend_id": new_bid,
                 "agents": {
-                    "synced": result.active,
-                    "recovered": result.recovered,
-                    "inactive": result.newly_inactive,
+                    "synced": sync_result.active,
+                    "recovered": sync_result.recovered,
+                    "inactive": sync_result.newly_inactive,
                 },
             }
         )
@@ -263,10 +323,11 @@ async def _cmd_team_relay(args: argparse.Namespace) -> None:
         print(f"  Session: {old_session[:8]} → {new_sid[:8]}")
         old_bid = lead.backend_id if lead else "N/A"
         print(f"  Backend: {old_bid} → {new_bid}")
-        total_active = len(result.active)
+        n_active = len(sync_result.active)
         print(
-            f"  Agents: {len(result.recovered)} recovered, "
-            f"{total_active} active, {len(result.newly_inactive)} inactive"
+            f"  Agents: {len(sync_result.recovered)} recovered, "
+            f"{n_active} active, "
+            f"{len(sync_result.newly_inactive)} inactive"
         )
 
 
@@ -452,16 +513,35 @@ async def _cmd_agent_sync(args: argparse.Namespace) -> None:
 
 
 async def _cmd_agent_relay(args: argparse.Namespace) -> None:
-    """Context relay for a teammate: exit old process + respawn with fresh context."""
+    """Context relay for a teammate: exit old process + respawn."""
+    team = _require_team(args)
+
+    # When --handoff is provided, delegate to _context_relay.relay_agent
+    handoff = getattr(args, "handoff", None)
+    if handoff:
+        from cc_team._context_relay import relay_agent
+
+        request = _build_relay_request(args)
+        try:
+            result = await relay_agent(request, team, args.name)
+        except (FileNotFoundError, ValueError, TimeoutError) as e:
+            _error(str(e))
+            sys.exit(1)
+        _print_relay_result(args, result, label="Agent relay", extra_json={"name": args.name})
+        return
+
+    # Original logic (no handoff)
     from cc_team._spawn import spawn_agent_workflow
     from cc_team.process_manager import ProcessManager
     from cc_team.types import SpawnAgentOptions
 
-    team = _require_team(args)
     mgr, config = await _require_config(team)
 
-    # Look up member from already-loaded config (avoid double file read)
-    member = next((m for m in config.members if m.name == args.name), None)
+    # Look up member from already-loaded config
+    member = next(
+        (m for m in config.members if m.name == args.name),
+        None,
+    )
     if member is None:
         _error(f"Member '{args.name}' not found in team '{team}'")
         sys.exit(1)
@@ -473,13 +553,17 @@ async def _cmd_agent_relay(args: argparse.Namespace) -> None:
     old_backend = member.backend_id
 
     # Step 1: graceful exit of old agent
-    await _graceful_exit_pane(old_backend, args.timeout, label="Agent pane")
+    await _graceful_exit_pane(
+        old_backend,
+        args.timeout,
+        label="Agent pane",
+    )
 
     # Step 2: remove old member from config
     await mgr.remove_member(args.name)
 
     # Step 3: respawn with preserved config (or new prompt)
-    prompt = args.prompt if args.prompt else (member.prompt or "Continue working")
+    prompt = args.prompt or member.prompt or "Continue working"
     agent_cwd = member.cwd or os.getcwd()
 
     options = SpawnAgentOptions(
@@ -749,6 +833,137 @@ async def _cmd_skill(args: argparse.Namespace) -> None:
         print(SKILL_DOC)
 
 
+# ── relay 命令（standalone）────────────────────────────────
+
+
+async def _cmd_relay(args: argparse.Namespace) -> None:
+    """Standalone context relay: exit old process + start new with handoff."""
+    from cc_team._context_relay import RelayRequest, relay_standalone
+    from cc_team.process_manager import ProcessManager
+    from cc_team.tmux import TmuxManager
+
+    cct_sid = os.environ.get("CCT_SESSION_ID")
+    if not cct_sid:
+        _error("CCT_SESSION_ID env var is required for relay")
+        sys.exit(1)
+
+    if not args.backend_id:
+        _error("--backend-id is required for standalone relay")
+        sys.exit(1)
+
+    request = RelayRequest(
+        cct_session_id=cct_sid,
+        handoff_path=args.handoff,
+        model=args.model,
+        timeout=args.timeout,
+        cwd=os.getcwd(),
+    )
+
+    tmux = TmuxManager()
+    pm = ProcessManager(tmux=tmux)
+
+    try:
+        result = await relay_standalone(request, pm, args.backend_id, tmux)
+    except (FileNotFoundError, TimeoutError) as e:
+        _error(str(e))
+        sys.exit(1)
+
+    _print_relay_result(args, result)
+
+
+# ── setup 命令 ─────────────────────────────────────────────
+
+
+@functools.lru_cache(maxsize=1)
+def _find_plugin_dir() -> str:
+    """Locate the plugin/ directory shipped with the package.
+
+    Checks two locations:
+    1. Inside the installed package (pip install): cc_team/plugin/
+    2. Dev/editable mode: project_root/plugin/
+    """
+    pkg_dir = pathlib.Path(__file__).resolve().parent  # cc_team/
+    # Installed mode: plugin/ lives inside the package directory
+    candidate = pkg_dir / "plugin"
+    if candidate.is_dir():
+        return str(candidate)
+    # Dev/editable mode: walk up to project root
+    root = pkg_dir.parent.parent  # src → project root
+    return str(root / "plugin")
+
+
+async def _cmd_setup(args: argparse.Namespace) -> None:
+    """Print plugin path or install symlink."""
+    plugin_dir = _find_plugin_dir()
+
+    if getattr(args, "install", False):
+        plugins_home = pathlib.Path.home() / ".claude" / "plugins"
+        link_path = plugins_home / "cc-team"
+        plugins_home.mkdir(parents=True, exist_ok=True)
+
+        if link_path.exists() or link_path.is_symlink():
+            if args.use_json:
+                _json_out({"status": "exists", "path": str(link_path)})
+            else:
+                print(f"Plugin link already exists: {link_path}")
+            return
+
+        link_path.symlink_to(plugin_dir)
+        if args.use_json:
+            _json_out({"status": "installed", "path": str(link_path), "target": plugin_dir})
+        else:
+            print(f"Plugin installed: {link_path} → {plugin_dir}")
+    else:
+        if args.use_json:
+            _json_out({"plugin_dir": plugin_dir})
+        else:
+            print(f"Plugin directory: {plugin_dir}")
+            print()
+            print("To install manually, create a symlink:")
+            print(f"  ln -s {plugin_dir} ~/.claude/plugins/cc-team")
+            print()
+            print("Or run: cct setup --install")
+
+
+# ── session 命令 ───────────────────────────────────────────
+
+
+def _cmd_session_start(args: argparse.Namespace) -> None:
+    """Start a new Claude session with CCT_SESSION_ID set.
+
+    This is synchronous — os.execvpe replaces the current process.
+    """
+    from cc_team.hooks._common import relay_paths
+    from cc_team.process_manager import _find_claude_binary
+
+    cct_sid = str(uuid.uuid4())
+    proj = os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())
+
+    # Create relay directory and init history.json
+    paths = relay_paths(cct_sid, proj)
+    os.makedirs(paths["dir"], exist_ok=True)
+
+    history_data = {"sessions": [], "created_at": datetime.now(timezone.utc).isoformat()}
+    with open(paths["history"], "w") as f:
+        json.dump(history_data, f, indent=2)
+
+    # Prepare env with CCT_SESSION_ID
+    env = os.environ.copy()
+    env["CCT_SESSION_ID"] = cct_sid
+
+    # Passthrough args for claude
+    passthrough = getattr(args, "claude_args", []) or []
+    # Strip leading "--" if present (from argparse REMAINDER)
+    if passthrough and passthrough[0] == "--":
+        passthrough = passthrough[1:]
+
+    claude_bin = _find_claude_binary()
+    if not getattr(args, "quiet", False):
+        print(f"Starting session: {cct_sid}", file=sys.stderr)
+
+    os.execvpe(claude_bin, [claude_bin, *passthrough], env)
+
+
 # ── Parser 构建 ───────────────────────────────────────────
 
 
@@ -796,6 +1011,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     trl.add_argument("--model", default=DEFAULT_MODEL, help="Model for new team lead")
     trl.add_argument("--timeout", type=int, default=30, help="Exit wait timeout in seconds")
+    trl.add_argument("--handoff", help="Path to handoff file for context injection")
     trl.set_defaults(func=_cmd_team_relay)
 
     tss = team_sub.add_parser("session", help="Query or rotate team lead session ID")
@@ -846,7 +1062,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     arl.add_argument("--name", required=True, help="Agent name")
     arl.add_argument("--prompt", help="New prompt (default: reuse original)")
+    arl.add_argument("--model", default=DEFAULT_MODEL, help="Model for respawned agent")
     arl.add_argument("--timeout", type=int, default=30, help="Exit wait timeout (seconds)")
+    arl.add_argument("--handoff", help="Path to handoff file for context injection")
     arl.set_defaults(func=_cmd_agent_relay)
 
     asyn = agent_sub.add_parser(
@@ -909,6 +1127,34 @@ def _build_parser() -> argparse.ArgumentParser:
     st = sub.add_parser("status", help="Show comprehensive team status")
     st.set_defaults(func=_cmd_status)
 
+    # ── relay (standalone, no --team-name) ──
+    rl = sub.add_parser(
+        "relay",
+        help="Standalone context relay (requires CCT_SESSION_ID env)",
+    )
+    rl.add_argument("--handoff", required=True, help="Path to handoff file")
+    rl.add_argument("--backend-id", dest="backend_id", help="Target tmux pane ID")
+    rl.add_argument("--model", default=DEFAULT_MODEL, help="Model for new session")
+    rl.add_argument("--timeout", type=int, default=30, help="Exit wait timeout (seconds)")
+    rl.set_defaults(func=_cmd_relay)
+
+    # ── setup (no --team-name required) ─────
+    su = sub.add_parser("setup", help="Show plugin path or install symlink")
+    su.add_argument("--install", action="store_true", help="Install plugin symlink")
+    su.set_defaults(func=_cmd_setup)
+
+    # ── session ──────────────────────────────
+    sess_p = sub.add_parser("session", help="Session management")
+    sess_sub = sess_p.add_subparsers(dest="session_action")
+
+    ss = sess_sub.add_parser("start", help="Start Claude with CCT_SESSION_ID")
+    ss.add_argument(
+        "claude_args",
+        nargs=argparse.REMAINDER,
+        help="Arguments to pass through to claude",
+    )
+    ss.set_defaults(func=_cmd_session_start, is_sync=True)
+
     # ── skill (no --team-name required) ──────
     sk = sub.add_parser("skill", help="Print AI agent skill reference document")
     sk.set_defaults(func=_cmd_skill)
@@ -929,7 +1175,10 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(1)
 
     try:
-        asyncio.run(args.func(args))
+        if getattr(args, "is_sync", False):
+            args.func(args)
+        else:
+            asyncio.run(args.func(args))
     except KeyboardInterrupt:
         sys.exit(130)
     except SystemExit:
