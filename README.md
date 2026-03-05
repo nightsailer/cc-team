@@ -35,6 +35,9 @@ pip install cc-team
 
 # From source (for development)
 pip install -e .
+
+# Optional: create a shell alias for convenience
+alias cct='uvx --from cc-team cct'
 ```
 
 **Requirements:** Python 3.10+ and [tmux](https://github.com/tmux/tmux) installed on the system.

@@ -35,6 +35,9 @@ pip install cc-team
 
 # 从源码安装（开发阶段）
 pip install -e .
+
+# 可选：创建 shell alias 简化调用
+alias cct='uvx --from cc-team cct'
 ```
 
 **环境要求：** Python 3.10+ 以及系统已安装 [tmux](https://github.com/tmux/tmux)。
