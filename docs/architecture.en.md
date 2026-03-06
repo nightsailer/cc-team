@@ -91,14 +91,32 @@ cc-team/
 │       │   # === CLI Layer ===
 │       ├── cli.py                    # cc-agent CLI entry point
 │       └── _skill_doc.py            # AI agent skill reference document
+│       │
+│       │   # === Context Relay Layer ===
+│       ├── _context_relay.py        # Context relay with handoff injection
+│       │
+│       │   # === Plugin Hooks ===
+│       ├── hooks/
+│       │   ├── __init__.py
+│       │   ├── _common.py           # Shared hook utilities (relay_paths, config)
+│       │   ├── stop.py              # Stop hook (2-phase handoff)
+│       │   └── statusline.py        # Context window usage monitor
 │
 └── tests/                            # 1:1 mapped test files
+├── plugin/                          # Claude Code plugin (distributable)
+│   ├── .claude-plugin/
+│   │   └── plugin.json             # Plugin manifest
+│   └── hooks/
+│       └── hooks.json              # Hook + statusline definitions
 ```
 
 ### 3.2 Layered Dependency Graph
 
 ```
                   cli.py
+                    │
+                    ▼
+            _context_relay.py ───→ process_manager, team_manager, tmux, _spawn/_sync
                     │
                     ▼
               controller.py ──────→ events.py (base class)
@@ -126,6 +144,7 @@ cc-team/
 - _serialization.py depends only on types.py
 - Storage layer Managers are independent of each other
 - agent_handle is decoupled from controller via Protocol interface
+- hooks/ package runs standalone (invoked by Claude Code plugin system), depends only on _common.py
 
 ### 3.3 Changes from v0.1.0
 
@@ -405,6 +424,18 @@ in config.json and filesystem. Only the process and context are refreshed.
 - Alive + isActive=true → normal sync
 - Dead + isActive=true → mark inactive
 - Dead + isActive=false → skip (no redundant write)
+
+**Handoff-Based Relay (v2)**
+
+The plugin system extends relay with automatic handoff:
+
+1. Statusline hook tracks context usage → writes to `usage.json`
+2. Stop hook detects usage > threshold → blocks stop, instructs handoff file creation
+3. Agent writes handoff.md with Current Task, Completed Work, Pending Work, Key Context, Next Steps
+4. Next stop → stop hook launches `cct relay --handoff` or `cct team relay --handoff` in background
+5. Relay reads handoff, exits old session, starts new one, injects handoff content
+
+This creates a fully automatic context rotation cycle without user intervention.
 
 ---
 

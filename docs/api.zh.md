@@ -11,6 +11,8 @@
 - [MessageBuilder](#messagebuilder)
 - [AsyncEventEmitter](#asynceventemitter)
 - [ProcessManager](#processmanager)
+- [上下文接力](#上下文接力)
+- [Hooks](#hooks)
 - [类型定义](#类型定义)
 - [异常](#异常)
 
@@ -655,6 +657,130 @@ ProcessManager(*, tmux: TmuxManager | None = None)
 
 构建 Team Lead 的 Claude CLI 启动参数。包含 `--session-id`，无 `--agent-color`。
 
+#### `async graceful_exit(backend_id: str, *, timeout: int = 30) -> None`
+
+向 tmux pane 发送 `/exit` 并轮询等待退出。超时则抛出 `TimeoutError`。
+
+```python
+await pm.graceful_exit("%42", timeout=30)
+```
+
+#### `async detect_ready(backend_id: str, *, timeout: int = 60) -> bool`
+
+轮询 `detect_state` 直到 READY/WAITING_INPUT/IDLE 或超时。就绪返回 `True`，超时返回 `False`。
+
+```python
+is_ready = await pm.detect_ready("%42", timeout=60)
+```
+
+---
+
+## 上下文接力
+
+上下文接力模块，用于轮转 Claude Code 会话并注入交接上下文。
+
+```python
+from cc_team._context_relay import RelayRequest, RelayResult, relay_standalone, relay_lead, relay_agent
+```
+
+### RelayRequest
+
+```python
+@dataclass
+class RelayRequest:
+    cct_session_id: str      # CCT 会话追踪 ID
+    handoff_path: str        # 交接文件路径
+    model: str = "claude-sonnet-4-6"
+    timeout: int = 30        # 优雅退出超时（秒）
+    cwd: str = ""            # 工作目录
+```
+
+### RelayResult
+
+```python
+@dataclass
+class RelayResult:
+    old_backend_id: str | None   # 旧 tmux pane ID
+    new_backend_id: str          # 新 tmux pane ID
+    cct_session_id: str          # CCT 会话追踪 ID
+    handoff_injected: bool = False  # 是否已注入交接内容
+```
+
+### 函数
+
+#### `async relay_standalone(request, backend, backend_id, tmux) -> RelayResult`
+
+独立 Claude 进程的上下文接力（无团队）。步骤：
+1. 优雅退出旧会话
+2. 在同一 pane 中构建并发送新 claude 命令
+3. 等待就绪 + 注入交接内容
+4. 更新历史记录
+
+#### `async relay_lead(request, team_name) -> RelayResult`
+
+Team Lead 的上下文接力。步骤：
+1. 优雅退出旧 TL
+2. 轮转会话
+3. 启动新 TL（复用同一 pane）
+4. 通过 TmuxManager 注入交接内容
+5. 同步成员状态
+6. 更新历史记录
+
+#### `async relay_agent(request, team_name, agent_name) -> RelayResult`
+
+Teammate 的上下文接力。步骤：
+1. 优雅退出 Agent
+2. 从配置中移除成员
+3. 通过 spawn_agent_workflow 重新启动，交接内容作为 prompt
+4. 更新历史记录
+
+---
+
+## Hooks
+
+Claude Code 插件 hooks，用于自动上下文接力。
+
+### Stop Hook（`cc_team.hooks.stop`）
+
+两阶段交接机制：
+
+- **阶段 1**（无交接文件）：当上下文使用率超过阈值时，阻止停止并指示编写交接文件
+- **阶段 2**（交接文件存在）：在后台启动接力并允许停止
+
+```bash
+# 由 Claude Code 插件系统自动调用
+python3 -m cc_team.hooks.stop
+```
+
+需要 `CCT_SESSION_ID` 环境变量。子 Agent 自动跳过。
+
+### Statusline Hook（`cc_team.hooks.statusline`）
+
+渲染彩色进度条显示上下文窗口使用率：
+
+```bash
+# 从 stdin 读取 JSON，输出格式化状态行
+python3 -m cc_team.hooks.statusline
+```
+
+输出格式：`[agent] ████░░░░ 45.2% | 90k/200k | $0.150 | claude-sonnet-4-6`
+
+颜色：绿色（<60%）、黄色（60-80%）、红色（>80%）。
+
+设置 `CCT_SESSION_ID` 时，将使用数据持久化到 `relay_paths()/usage.json`。
+
+### 通用工具（`cc_team.hooks._common`）
+
+| 函数 | 说明 |
+|------|------|
+| `project_dir()` | CLAUDE_PROJECT_DIR，回退到 cwd |
+| `read_json(path)` | 读取 JSON 文件，出错时返回 `{}` |
+| `write_json(path, data)` | 写入 dict 为 JSON，自动创建目录 |
+| `atomic_write_json(path, data)` | 原子写入（tmp + rename） |
+| `load_config(proj)` | 读取 context-relay-config.json |
+| `cct_data_dir(proj)` | CCT 项目数据目录 |
+| `relay_paths(cct_session_id, proj)` | 每会话接力文件路径 |
+
 ---
 
 ## 类型定义
@@ -816,6 +942,8 @@ class AgentBackend(Protocol):
     def track(self, agent_name: str, pane_id: str) -> None: ...
     def tracked_agents(self) -> list[str]: ...
     async def send_input(self, agent_name: str, text: str) -> None: ...
+    async def graceful_exit(self, backend_id: str, *, timeout: int = 30) -> None: ...
+    async def detect_ready(self, backend_id: str, *, timeout: int = 60) -> bool: ...
 ```
 
 ---
@@ -834,6 +962,7 @@ cct --team-name <name> team relay [--model <model>] [--timeout <seconds>]
 |------|--------|------|
 | `--model` | `claude-sonnet-4-6` | 新 TL 的模型 |
 | `--timeout` | `30` | 退出等待超时（秒） |
+| `--handoff` | — | 交接文件路径，用于上下文注入 |
 
 **输出**（JSON）：`old_session`, `new_session`, `old_backend_id`, `new_backend_id`, `agents.synced`, `agents.recovered`, `agents.inactive`
 
@@ -850,6 +979,7 @@ cct --team-name <name> agent relay --name <agent> [--prompt <new-prompt>] [--tim
 | `--name` | （必填） | Agent 名称 |
 | `--prompt` | （沿用原始） | Agent 的新 prompt |
 | `--timeout` | `30` | 退出等待超时（秒） |
+| `--handoff` | — | 交接文件路径，用于上下文注入 |
 
 **输出**（JSON）：`name`, `old_backend_id`, `new_backend_id`, `prompt`, `color`
 
@@ -862,6 +992,43 @@ cct --team-name <name> agent sync
 ```
 
 **输出**（JSON）：`synced`, `recovered`, `inactive`
+
+### `cct relay`
+
+独立上下文接力（无团队）。需要 `CCT_SESSION_ID` 环境变量。
+
+```bash
+cct relay --handoff <path> --backend-id <pane-id> [--model <model>] [--timeout <seconds>]
+```
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--handoff` | （必填） | 交接文件路径 |
+| `--backend-id` | （必填） | 目标 tmux pane ID |
+| `--model` | `claude-sonnet-4-6` | 新会话的模型 |
+| `--timeout` | `30` | 退出等待超时（秒） |
+
+### `cct setup`
+
+显示插件路径或安装符号链接。
+
+```bash
+cct setup [--install]
+```
+
+| 参数 | 说明 |
+|------|------|
+| `--install` | 在 `~/.claude/plugins/cc-team` 创建符号链接 |
+
+### `cct session start`
+
+启动带 `CCT_SESSION_ID` 环境变量的新 Claude 会话。
+
+```bash
+cct session start [-- <claude-args>...]
+```
+
+创建接力目录结构，并用 `claude` 替换当前进程。
 
 ---
 

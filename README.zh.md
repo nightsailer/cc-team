@@ -20,6 +20,7 @@
 - **事件驱动** — Node.js 风格的 `AsyncEventEmitter`，支持响应式编程
 - **文件级锁** — 基于 `fcntl` 异步封装的安全并发访问
 - **内置技能参考** — `cct skill` 输出面向 AI 智能体的自包含命令参考文档
+- **插件系统** — 可分发的 Claude Code 插件，内置自动上下文接力 hooks（stop + statusline）
 
 ## 安装
 
@@ -164,6 +165,19 @@ cct --team-name my-project agent relay --name researcher
 
 # 外部干扰后同步 Agent 状态
 cct --team-name my-project agent sync
+
+# 带交接文件的上下文接力（自动注入上下文）
+cct --team-name my-project team relay --handoff handoff.md
+cct --team-name my-project agent relay --name researcher --handoff handoff.md
+
+# 独立接力（无需团队，需要 CCT_SESSION_ID 环境变量）
+cct relay --handoff handoff.md --backend-id %42
+
+# 启动带 CCT_SESSION_ID 跟踪的 Claude 会话
+cct session start
+
+# 安装 CCT 插件以启用 Claude Code hooks
+cct setup --install
 ```
 
 所有命令均支持 `--json` 参数输出机器可读格式：
@@ -196,19 +210,29 @@ cc-team/src/cc_team/
 ├── agent_handle.py       # 智能体代理对象
 ├── controller.py         # 中央编排器
 ├── cli.py                # cct CLI 入口
+├── _context_relay.py     # 上下文接力与交接注入
+├── hooks/                # Claude Code 插件 hooks
+│   ├── _common.py        # 共享 hook 工具函数
+│   ├── stop.py           # Stop hook（两阶段交接）
+│   └── statusline.py     # 上下文窗口监控
 └── _skill_doc.py         # AI 智能体技能参考文档
+plugin/                   # Claude Code 插件（可分发）
+├── .claude-plugin/plugin.json
+└── hooks/hooks.json
 ```
 
 **层级依赖关系（上 → 下）：**
 
 ```
 CLI（cli.py）
+  └─ 上下文接力（_context_relay.py）
   └─ 编排层（controller.py, agent_handle.py, event_router.py）
        └─ 通信层（inbox_poller.py, message_builder.py, events.py）
        └─ 进程层（process_manager.py, tmux.py）
        └─ 存储层（team_manager.py, task_manager.py, inbox.py）
             └─ 序列化层（_serialization.py, filelock.py）
                  └─ 基础层（types.py, paths.py, exceptions.py）
+插件层（hooks/stop.py, hooks/statusline.py, hooks/_common.py）
 ```
 
 ## 核心概念
@@ -302,6 +326,31 @@ messages = inbox.read_unread()
 # 消息构建
 builder = MessageBuilder("my-team")
 await builder.send_plain("researcher", "Hello!", summary="Greeting")
+```
+
+### 插件系统
+
+cc-team 附带可分发的 Claude Code 插件，提供自动上下文接力功能：
+
+```bash
+# 安装插件（符号链接到 ~/.claude/plugins/cc-team）
+cct setup --install
+
+# 或查看插件目录路径
+cct setup
+```
+
+插件包含两个 hooks：
+- **Stop Hook** — 监控上下文窗口使用率。当使用率超过阈值（默认 80%）时，阻止停止并指示 Agent 编写交接文件。交接文件写入后，下次停止会触发后台接力。
+- **Statusline Hook** — 渲染彩色进度条，显示上下文窗口使用率、token 数量、费用和模型信息。
+
+通过 `.claude/hooks/context-relay-config.json` 配置：
+```json
+{
+  "threshold": 80,
+  "max_block_count": 3,
+  "team_name": ""
+}
 ```
 
 ## 协议兼容性

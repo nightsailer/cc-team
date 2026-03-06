@@ -7,7 +7,7 @@ AI agents (e.g. via ``cct skill``).
 
 from __future__ import annotations
 
-SKILL_DOC_VERSION: str = "0.2.0"
+SKILL_DOC_VERSION: str = "0.3.0"
 
 SKILL_SECTIONS: list[dict[str, str]] = [
     {
@@ -46,7 +46,10 @@ SKILL_SECTIONS: list[dict[str, str]] = [
             "  Query or manage the lead session ID.\n"
             "  No flags: print current session ID.\n"
             "  --rotate: generate a new UUID session ID.\n"
-            "  --set <id>: set a specific session ID."
+            "  --set <id>: set a specific session ID.\n\n"
+            "cct --team-name <t> team relay --handoff <path> [--model <m>] [--timeout <s>]\n"
+            "  Context relay with handoff: exit old TL, spawn new TL, inject handoff content.\n"
+            "  The handoff file content is automatically injected into the new session."
         ),
     },
     {
@@ -70,7 +73,11 @@ SKILL_SECTIONS: list[dict[str, str]] = [
             "  Verify pane liveness for all active agents.\n"
             "  Alive agents are marked as synced; dead agents are marked inactive.\n\n"
             "cct --team-name <t> agent kill --name <n>\n"
-            "  Force kill an agent process and remove from team."
+            "  Force kill an agent process and remove from team.\n\n"
+            "cct --team-name <t> agent relay --name <n> --handoff <path>\n"
+            "    [--model <m>] [--timeout <s>]\n"
+            "  Context relay with handoff: exit agent, respawn with "
+            "handoff as initial prompt."
         ),
     },
     {
@@ -118,6 +125,33 @@ SKILL_SECTIONS: list[dict[str, str]] = [
         ),
     },
     {
+        "title": "Relay Command",
+        "content": (
+            "cct relay --handoff <path> --backend-id <id> [--model <m>] [--timeout <s>]\n"
+            "  Standalone context relay (no team). Requires CCT_SESSION_ID env var.\n"
+            "  Exits old session, starts new one in same pane, injects handoff content."
+        ),
+    },
+    {
+        "title": "Setup Command",
+        "content": (
+            "cct setup\n"
+            "  Show the plugin directory path and installation instructions.\n\n"
+            "cct setup --install\n"
+            "  Install the CCT plugin by creating a symlink at ~/.claude/plugins/cc-team.\n"
+            "  The plugin provides Stop and Statusline hooks for automatic context relay."
+        ),
+    },
+    {
+        "title": "Session Command",
+        "content": (
+            "cct session start [-- <claude-args>...]\n"
+            "  Start a new Claude session with CCT_SESSION_ID environment variable set.\n"
+            "  Creates relay directory structure and passes through any extra args to claude.\n"
+            "  No --team-name required."
+        ),
+    },
+    {
         "title": "Workflow Patterns",
         "content": (
             "1. Create a team:\n"
@@ -146,7 +180,16 @@ SKILL_SECTIONS: list[dict[str, str]] = [
             "9. Register external agent (no process):\n"
             "   cct --team-name proj agent register --name external-bot\n\n"
             "10. Sync agent liveness:\n"
-            "   cct --team-name proj agent sync"
+            "   cct --team-name proj agent sync\n\n"
+            "--- Context Relay with Handoff ---\n\n"
+            "11. Start a tracked session:\n"
+            "    cct session start\n\n"
+            "12. Team relay with handoff:\n"
+            "    cct --team-name proj team relay --handoff handoff.md\n\n"
+            "13. Agent relay with handoff:\n"
+            "    cct --team-name proj agent relay --name worker --handoff handoff.md\n\n"
+            "14. Install plugin for automatic relay:\n"
+            "    cct setup --install"
         ),
     },
     {
@@ -167,7 +210,15 @@ SKILL_SECTIONS: list[dict[str, str]] = [
             "- Use 'agent sync' after a crash to reconcile config with "
             "actual pane liveness.\n"
             "- 'team relay' is the recommended way to rotate context — "
-            "it gracefully stops the old TL before spawning a new one."
+            "it gracefully stops the old TL before spawning a new one.\n"
+            "- Use 'setup --install' to enable automatic context relay "
+            "via Claude Code plugin hooks.\n"
+            "- 'session start' sets CCT_SESSION_ID for context tracking "
+            "across relays.\n"
+            "- The --handoff flag on relay commands injects context from "
+            "a file into the new session.\n"
+            "- The plugin Stop hook blocks stop when context usage exceeds "
+            "threshold, prompting handoff file creation."
         ),
     },
     {

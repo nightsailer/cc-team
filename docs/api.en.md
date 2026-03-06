@@ -11,6 +11,8 @@
 - [MessageBuilder](#messagebuilder)
 - [AsyncEventEmitter](#asynceventemitter)
 - [ProcessManager](#processmanager)
+- [Context Relay](#context-relay)
+- [Hooks](#hooks)
 - [Types](#types)
 - [Exceptions](#exceptions)
 
@@ -655,6 +657,130 @@ Build Claude CLI startup arguments for agents. Uses `shlex.join` for safe comman
 
 Build Claude CLI startup arguments for Team Lead. Includes `--session-id`, no `--agent-color`.
 
+#### `async graceful_exit(backend_id: str, *, timeout: int = 30) -> None`
+
+Send `/exit` to a tmux pane and poll until the pane dies. Raises `TimeoutError` if the pane does not exit within the timeout.
+
+```python
+await pm.graceful_exit("%42", timeout=30)
+```
+
+#### `async detect_ready(backend_id: str, *, timeout: int = 60) -> bool`
+
+Poll `detect_state` until READY/WAITING_INPUT/IDLE or timeout. Returns `True` if a ready-like state was detected, `False` on timeout.
+
+```python
+is_ready = await pm.detect_ready("%42", timeout=60)
+```
+
+---
+
+## Context Relay
+
+Context relay module for rotating Claude Code sessions with handoff context injection.
+
+```python
+from cc_team._context_relay import RelayRequest, RelayResult, relay_standalone, relay_lead, relay_agent
+```
+
+### RelayRequest
+
+```python
+@dataclass
+class RelayRequest:
+    cct_session_id: str      # CCT session tracking ID
+    handoff_path: str        # Path to handoff file
+    model: str = "claude-sonnet-4-6"
+    timeout: int = 30        # Graceful exit timeout (seconds)
+    cwd: str = ""            # Working directory
+```
+
+### RelayResult
+
+```python
+@dataclass
+class RelayResult:
+    old_backend_id: str | None   # Previous tmux pane ID
+    new_backend_id: str          # New tmux pane ID
+    cct_session_id: str          # CCT session tracking ID
+    handoff_injected: bool = False  # Whether handoff content was injected
+```
+
+### Functions
+
+#### `async relay_standalone(request, backend, backend_id, tmux) -> RelayResult`
+
+Context relay for a standalone Claude process (no team). Steps:
+1. Graceful exit old session
+2. Build new claude command and send to same pane
+3. Wait for readiness + inject handoff content
+4. Update history
+
+#### `async relay_lead(request, team_name) -> RelayResult`
+
+Context relay for team lead. Steps:
+1. Graceful exit old TL
+2. Rotate session
+3. Spawn new TL (reuse same pane)
+4. Inject handoff via TmuxManager
+5. Sync member states
+6. Update history
+
+#### `async relay_agent(request, team_name, agent_name) -> RelayResult`
+
+Context relay for a teammate. Steps:
+1. Graceful exit agent
+2. Remove member from config
+3. Respawn via spawn_agent_workflow with handoff as prompt
+4. Update history
+
+---
+
+## Hooks
+
+Claude Code plugin hooks for automatic context relay.
+
+### Stop Hook (`cc_team.hooks.stop`)
+
+Two-phase handoff mechanism:
+
+- **Phase 1** (no handoff file): When context usage exceeds threshold, blocks stop with instructions to write a handoff file
+- **Phase 2** (handoff exists): Launches relay in background and allows stop
+
+```bash
+# Invoked automatically by Claude Code plugin system
+python3 -m cc_team.hooks.stop
+```
+
+Requires `CCT_SESSION_ID` environment variable. Skips execution for subagents.
+
+### Statusline Hook (`cc_team.hooks.statusline`)
+
+Renders a colored progress bar showing context window usage:
+
+```bash
+# Reads JSON from stdin, outputs formatted status line
+python3 -m cc_team.hooks.statusline
+```
+
+Output format: `[agent] ████░░░░ 45.2% | 90k/200k | $0.150 | claude-sonnet-4-6`
+
+Colors: green (<60%), yellow (60-80%), red (>80%).
+
+When `CCT_SESSION_ID` is set, persists usage data to `relay_paths()/usage.json`.
+
+### Common Utilities (`cc_team.hooks._common`)
+
+| Function | Description |
+|----------|-------------|
+| `project_dir()` | CLAUDE_PROJECT_DIR with cwd fallback |
+| `read_json(path)` | Read JSON file, return `{}` on error |
+| `write_json(path, data)` | Write dict as JSON with mkdir |
+| `atomic_write_json(path, data)` | Atomic write (tmp + rename) |
+| `load_config(proj)` | Read context-relay-config.json |
+| `cct_data_dir(proj)` | CCT project data directory |
+| `relay_paths(cct_session_id, proj)` | Per-session relay file paths |
+
 ---
 
 ## Types
@@ -816,6 +942,8 @@ class AgentBackend(Protocol):
     def track(self, agent_name: str, pane_id: str) -> None: ...
     def tracked_agents(self) -> list[str]: ...
     async def send_input(self, agent_name: str, text: str) -> None: ...
+    async def graceful_exit(self, backend_id: str, *, timeout: int = 30) -> None: ...
+    async def detect_ready(self, backend_id: str, *, timeout: int = 60) -> bool: ...
 ```
 
 ---
@@ -834,6 +962,7 @@ cct --team-name <name> team relay [--model <model>] [--timeout <seconds>]
 |-----------|---------|-------------|
 | `--model` | `claude-sonnet-4-6` | Model for new TL |
 | `--timeout` | `30` | Exit wait timeout in seconds |
+| `--handoff` | — | Path to handoff file for context injection |
 
 **Output** (JSON): `old_session`, `new_session`, `old_backend_id`, `new_backend_id`, `agents.synced`, `agents.recovered`, `agents.inactive`
 
@@ -850,6 +979,7 @@ cct --team-name <name> agent relay --name <agent> [--prompt <new-prompt>] [--tim
 | `--name` | (required) | Agent name |
 | `--prompt` | (reuse original) | New prompt for the agent |
 | `--timeout` | `30` | Exit wait timeout in seconds |
+| `--handoff` | — | Path to handoff file for context injection |
 
 **Output** (JSON): `name`, `old_backend_id`, `new_backend_id`, `prompt`, `color`
 
@@ -862,6 +992,43 @@ cct --team-name <name> agent sync
 ```
 
 **Output** (JSON): `synced`, `recovered`, `inactive`
+
+### `cct relay`
+
+Standalone context relay (no team). Requires `CCT_SESSION_ID` environment variable.
+
+```bash
+cct relay --handoff <path> --backend-id <pane-id> [--model <model>] [--timeout <seconds>]
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `--handoff` | (required) | Path to handoff file |
+| `--backend-id` | (required) | Target tmux pane ID |
+| `--model` | `claude-sonnet-4-6` | Model for new session |
+| `--timeout` | `30` | Exit wait timeout in seconds |
+
+### `cct setup`
+
+Show plugin path or install symlink.
+
+```bash
+cct setup [--install]
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `--install` | Create symlink at `~/.claude/plugins/cc-team` |
+
+### `cct session start`
+
+Start a new Claude session with `CCT_SESSION_ID` environment variable set.
+
+```bash
+cct session start [-- <claude-args>...]
+```
+
+Creates relay directory structure and replaces the current process with `claude`.
 
 ---
 

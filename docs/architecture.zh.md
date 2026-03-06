@@ -91,14 +91,32 @@ cc-team/
 │       │   # === CLI 层 ===
 │       ├── cli.py                    # cc-agent 命令行入口
 │       └── _skill_doc.py            # AI 智能体技能参考文档
+│       │
+│       │   # === 上下文接力层 ===
+│       ├── _context_relay.py        # 带交接注入的上下文接力
+│       │
+│       │   # === 插件 Hooks ===
+│       ├── hooks/
+│       │   ├── __init__.py
+│       │   ├── _common.py           # 共享 hook 工具（relay_paths、config）
+│       │   ├── stop.py              # Stop hook（两阶段交接）
+│       │   └── statusline.py        # 上下文窗口使用率监控
 │
 └── tests/                            # 1:1 映射测试文件
+├── plugin/                          # Claude Code 插件（可分发）
+│   ├── .claude-plugin/
+│   │   └── plugin.json             # 插件清单
+│   └── hooks/
+│       └── hooks.json              # Hook + statusline 定义
 ```
 
 ### 3.2 分层依赖图
 
 ```
                   cli.py
+                    │
+                    ▼
+            _context_relay.py ───→ process_manager, team_manager, tmux, _spawn/_sync
                     │
                     ▼
               controller.py ──────→ events.py (基类)
@@ -126,6 +144,7 @@ cc-team/
 - _serialization.py 仅依赖 types.py
 - 存储层各 Manager 互不依赖
 - agent_handle 通过 Protocol 接口与 controller 解耦
+- hooks/ 包独立运行（由 Claude Code 插件系统调用），仅依赖 _common.py
 
 ### 3.3 与 v0.1.0 的差异
 
@@ -403,6 +422,18 @@ TL 和 Teammate 使用相同的接力模式：
 - 存活 + isActive=true → 正常同步
 - 死亡 + isActive=true → 标记不活跃
 - 死亡 + isActive=false → 跳过（避免冗余写入）
+
+**基于交接的接力（v2）**
+
+插件系统通过自动交接扩展了接力功能：
+
+1. Statusline hook 追踪上下文使用率 → 写入 `usage.json`
+2. Stop hook 检测使用率超过阈值 → 阻止停止，指示创建交接文件
+3. Agent 编写 handoff.md，包含当前任务、已完成工作、待办工作、关键上下文、下一步
+4. 下次停止 → stop hook 在后台启动 `cct relay --handoff` 或 `cct team relay --handoff`
+5. Relay 读取交接文件，退出旧会话，启动新会话，注入交接内容
+
+这创建了完全自动的上下文轮转循环，无需用户干预。
 
 ---
 

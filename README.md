@@ -20,6 +20,7 @@ Compatible with the [Claude Code](https://docs.anthropic.com/en/docs/claude-code
 - **Event-driven** — Node.js-style `AsyncEventEmitter` for reactive programming
 - **File-level locking** — safe concurrent access with `fcntl` async wrappers
 - **Built-in skill reference** — `cct skill` outputs a self-contained command reference for AI agent consumption
+- **Plugin system** — distributable Claude Code plugin with automatic context relay hooks (stop + statusline)
 
 ## Installation
 
@@ -164,6 +165,19 @@ cct --team-name my-project agent relay --name researcher
 
 # Sync agent states after external disruption
 cct --team-name my-project agent sync
+
+# Context relay with handoff file (automatic context injection)
+cct --team-name my-project team relay --handoff handoff.md
+cct --team-name my-project agent relay --name researcher --handoff handoff.md
+
+# Standalone relay (no team, requires CCT_SESSION_ID env)
+cct relay --handoff handoff.md --backend-id %42
+
+# Start a Claude session with CCT_SESSION_ID tracking
+cct session start
+
+# Install CCT plugin for Claude Code hooks
+cct setup --install
 ```
 
 All commands support `--json` for machine-readable output:
@@ -196,19 +210,30 @@ cc-team/src/cc_team/
 ├── agent_handle.py       # Agent proxy object
 ├── controller.py         # Central orchestrator
 ├── cli.py                # cct CLI entry point
+├── _context_relay.py     # Context relay with handoff injection
+├── hooks/                # Claude Code plugin hooks
+│   ├── _common.py        # Shared hook utilities
+│   ├── stop.py           # Stop hook (2-phase handoff)
+│   └── statusline.py     # Context window monitor
 └── _skill_doc.py         # AI agent skill reference document
+
+plugin/                   # Claude Code plugin (distributable)
+├── .claude-plugin/plugin.json
+└── hooks/hooks.json
 ```
 
 **Layer dependencies (top → bottom):**
 
 ```
 CLI (cli.py)
+  └─ Context Relay (_context_relay.py)
   └─ Orchestration (controller.py, agent_handle.py, event_router.py)
        └─ Communication (inbox_poller.py, message_builder.py, events.py)
        └─ Process (process_manager.py, tmux.py)
        └─ Storage (team_manager.py, task_manager.py, inbox.py)
             └─ Serialization (_serialization.py, filelock.py)
                  └─ Foundation (types.py, paths.py, exceptions.py)
+Plugin (hooks/stop.py, hooks/statusline.py, hooks/_common.py)
 ```
 
 ## Core Concepts
@@ -302,6 +327,31 @@ messages = inbox.read_unread()
 # Message construction
 builder = MessageBuilder("my-team")
 await builder.send_plain("researcher", "Hello!", summary="Greeting")
+```
+
+### Plugin System
+
+cc-team ships a distributable Claude Code plugin that provides automatic context relay:
+
+```bash
+# Install the plugin (symlinks to ~/.claude/plugins/cc-team)
+cct setup --install
+
+# Or check the plugin directory path
+cct setup
+```
+
+The plugin includes two hooks:
+- **Stop Hook** — Monitors context window usage. When usage exceeds the threshold (default 80%), it blocks the stop and instructs the agent to write a handoff file. Once the handoff file exists, the next stop triggers a background relay.
+- **Statusline Hook** — Renders a colored progress bar showing context window usage, token counts, cost, and model info.
+
+Configuration via `.claude/hooks/context-relay-config.json`:
+```json
+{
+  "threshold": 80,
+  "max_block_count": 3,
+  "team_name": ""
+}
 ```
 
 ## Protocol Compatibility

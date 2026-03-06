@@ -986,6 +986,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # ── team ──────────────────────────────────
     team_p = sub.add_parser("team", help="Team management")
+    team_p.set_defaults(func=lambda _: (team_p.print_help(), sys.exit(1)))
     team_sub = team_p.add_subparsers(dest="team_action")
 
     tc = team_sub.add_parser("create", help="Create a new team")
@@ -1021,6 +1022,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # ── agent ─────────────────────────────────
     agent_p = sub.add_parser("agent", help="Agent management")
+    agent_p.set_defaults(func=lambda _: (agent_p.print_help(), sys.exit(1)))
     agent_sub = agent_p.add_subparsers(dest="agent_action")
 
     areg = agent_sub.add_parser("register", help="Register an agent without starting a process")
@@ -1079,6 +1081,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # ── task ──────────────────────────────────
     task_p = sub.add_parser("task", help="Task management")
+    task_p.set_defaults(func=lambda _: (task_p.print_help(), sys.exit(1)))
     task_sub = task_p.add_subparsers(dest="task_action")
 
     tkc = task_sub.add_parser("create", help="Create a new task")
@@ -1105,6 +1108,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # ── message ───────────────────────────────
     msg_p = sub.add_parser("message", help="Messaging operations")
+    msg_p.set_defaults(func=lambda _: (msg_p.print_help(), sys.exit(1)))
     msg_sub = msg_p.add_subparsers(dest="msg_action")
 
     ms = msg_sub.add_parser("send", help="Send a direct message")
@@ -1145,6 +1149,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # ── session ──────────────────────────────
     sess_p = sub.add_parser("session", help="Session management")
+    sess_p.set_defaults(func=lambda _: (sess_p.print_help(), sys.exit(1)))
     sess_sub = sess_p.add_subparsers(dest="session_action")
 
     ss = sess_sub.add_parser("start", help="Start Claude with CCT_SESSION_ID")
