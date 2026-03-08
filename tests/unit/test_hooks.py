@@ -11,6 +11,10 @@ Covers stop.main():
 Covers statusline.main():
 - With CCT_SESSION_ID: writes usage.json
 - Without CCT_SESSION_ID: render-only, no file write
+
+Covers CLI _hook subcommands:
+- cct _hook stop delegates to stop.main()
+- cct _hook statusline delegates to statusline.main()
 """
 
 from __future__ import annotations
@@ -350,3 +354,34 @@ class TestStatuslineMain:
         main()
         output = capsys.readouterr().out
         assert "parse error" in output
+
+
+class TestHookCLI:
+    """CLI _hook subcommand integration tests."""
+
+    def test_hook_stop_delegates_to_main(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """cct _hook stop delegates to stop.main()."""
+        monkeypatch.delenv("CCT_SESSION_ID", raising=False)
+
+        from cc_team.cli import main
+
+        # No CCT_SESSION_ID → stop.main() returns silently
+        main(["_hook", "stop"])
+
+    def test_hook_statusline_delegates_to_main(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """cct _hook statusline delegates to statusline.main()."""
+        monkeypatch.delenv("CCT_SESSION_ID", raising=False)
+        monkeypatch.setattr("sys.stdin", __import__("io").StringIO("{}"))
+
+        from cc_team.cli import main
+
+        main(["_hook", "statusline"])
+        # Empty session_id → no output
+        assert capsys.readouterr().out == ""

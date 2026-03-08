@@ -7,7 +7,7 @@ Phase 2 — handoff.md exists: launch relay in background, allow stop.
 Safety: all exceptions are caught and logged to prevent
 "Stop hook error occurred" from disrupting agent work.
 
-Usage: python3 -m cc_team.hooks.stop
+Usage: cct _hook stop
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-import traceback
 from datetime import datetime, timezone
 
 from cc_team.hooks._common import (
@@ -163,9 +162,3 @@ def main() -> None:
     sys.exit(2)
 
 
-if __name__ == "__main__":
-    try:
-        main()
-    except Exception:
-        _log_error(f"UNCAUGHT EXCEPTION:\n{traceback.format_exc()}")
-        sys.exit(0)

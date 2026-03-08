@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -m cc_team.hooks.stop",
+            "command": "cct _hook stop",
             "timeout": 30
           }
         ]
@@ -14,7 +14,7 @@
   },
   "statusLine": {
     "type": "command",
-    "command": "python3 -m cc_team.hooks.statusline",
+    "command": "cct _hook statusline",
     "padding": 2
   }
 }

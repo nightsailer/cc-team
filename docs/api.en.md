@@ -749,7 +749,7 @@ Two-phase handoff mechanism:
 
 ```bash
 # Invoked automatically by Claude Code plugin system
-python3 -m cc_team.hooks.stop
+cct _hook stop
 ```
 
 Requires `CCT_SESSION_ID` environment variable. Skips execution for subagents.
@@ -760,7 +760,7 @@ Renders a colored progress bar showing context window usage:
 
 ```bash
 # Reads JSON from stdin, outputs formatted status line
-python3 -m cc_team.hooks.statusline
+cct _hook statusline
 ```
 
 Output format: `[agent] ████░░░░ 45.2% | 90k/200k | $0.150 | claude-sonnet-4-6`

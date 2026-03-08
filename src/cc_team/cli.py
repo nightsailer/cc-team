@@ -1164,7 +1164,56 @@ def _build_parser() -> argparse.ArgumentParser:
     sk = sub.add_parser("skill", help="Print AI agent skill reference document")
     sk.set_defaults(func=_cmd_skill)
 
+    # ── _hook (internal, called by plugin hooks.json) ──
+    hook_p = sub.add_parser("_hook", help=argparse.SUPPRESS)
+    hook_p.set_defaults(func=lambda _: (hook_p.print_help(), sys.exit(1)))
+    hook_sub = hook_p.add_subparsers(dest="hook_action")
+
+    hook_stop = hook_sub.add_parser("stop", help="Stop hook handler")
+    hook_stop.set_defaults(func=_cmd_hook_stop, is_sync=True)
+
+    hook_sl = hook_sub.add_parser("statusline", help="Statusline hook handler")
+    hook_sl.set_defaults(func=_cmd_hook_statusline, is_sync=True)
+
     return parser
+
+
+# ── _hook handlers ────────────────────────────────────────
+
+
+def _run_hook_safely(hook_module: str) -> None:
+    """Run a hook main() with error suppression.
+
+    Hooks must never crash Claude Code. All non-SystemExit exceptions —
+    including import errors — are logged to the debug log and silently
+    swallowed so they never propagate to the CLI's top-level handler.
+    """
+    try:
+        import importlib
+
+        mod = importlib.import_module(f"cc_team.hooks.{hook_module}")
+        mod.main()
+    except SystemExit:
+        raise
+    except Exception:
+        import traceback
+
+        try:
+            from cc_team.hooks.stop import _log_error
+
+            _log_error(f"UNCAUGHT in {hook_module}:\n{traceback.format_exc()}")
+        except Exception:
+            pass  # Even logging failed — swallow silently
+
+
+def _cmd_hook_stop(_args: argparse.Namespace) -> None:
+    """Delegate to cc_team.hooks.stop.main() within the correct venv."""
+    _run_hook_safely("stop")
+
+
+def _cmd_hook_statusline(_args: argparse.Namespace) -> None:
+    """Delegate to cc_team.hooks.statusline.main() within the correct venv."""
+    _run_hook_safely("statusline")
 
 
 # ── 入口 ──────────────────────────────────────────────────

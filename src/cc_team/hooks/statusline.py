@@ -4,7 +4,7 @@
 If CCT_SESSION_ID is set, writes per-session usage to relay_paths()/usage.json.
 Always renders a colored progress bar to stdout.
 
-Usage: python3 -m cc_team.hooks.statusline
+Usage: cct _hook statusline
 """
 
 from __future__ import annotations
@@ -90,5 +90,3 @@ def main() -> None:
     )
 
 
-if __name__ == "__main__":
-    main()

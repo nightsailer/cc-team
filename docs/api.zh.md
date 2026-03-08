@@ -749,7 +749,7 @@ Claude Code 插件 hooks，用于自动上下文接力。
 
 ```bash
 # 由 Claude Code 插件系统自动调用
-python3 -m cc_team.hooks.stop
+cct _hook stop
 ```
 
 需要 `CCT_SESSION_ID` 环境变量。子 Agent 自动跳过。
@@ -760,7 +760,7 @@ python3 -m cc_team.hooks.stop
 
 ```bash
 # 从 stdin 读取 JSON，输出格式化状态行
-python3 -m cc_team.hooks.statusline
+cct _hook statusline
 ```
 
 输出格式：`[agent] ████░░░░ 45.2% | 90k/200k | $0.150 | claude-sonnet-4-6`
