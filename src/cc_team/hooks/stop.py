@@ -88,10 +88,22 @@ def _find_backend_id_tmux() -> str | None:
     return None
 
 
-def _launch_relay_background(cfg: dict) -> None:
-    """Launch ``cct relay`` or ``cct team relay`` in a detached subprocess."""
+def _launch_relay_background(cfg: dict, paths: dict) -> None:
+    """Launch ``cct relay`` or ``cct team relay`` in a detached subprocess.
+
+    For team relay: passes --handoff so relay_lead() injects context.
+    For standalone: also passes --backend-id (discovered via PID walk).
+    """
     team_name = cfg.get("team_name", "")
-    cmd = ["cct", "--team-name", team_name, "team", "relay"] if team_name else ["cct", "relay"]
+    handoff = paths["handoff"]
+
+    if team_name:
+        cmd = ["cct", "--team-name", team_name, "team", "relay", "--handoff", handoff]
+    else:
+        backend_id = _find_backend_id_tmux()
+        cmd = ["cct", "relay", "--handoff", handoff]
+        if backend_id:
+            cmd.extend(["--backend-id", backend_id])
 
     try:
         subprocess.Popen(
@@ -125,7 +137,7 @@ def main() -> None:
 
     # Phase 2: handoff exists → launch relay and allow stop
     if handoff_exists:
-        _launch_relay_background(cfg)
+        _launch_relay_background(cfg, paths)
         return
 
     # Phase 1: no handoff yet
@@ -160,5 +172,3 @@ def main() -> None:
     )
     print(msg, file=sys.stderr)
     sys.exit(2)
-
-

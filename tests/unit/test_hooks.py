@@ -124,14 +124,21 @@ class TestStopMain:
         )
 
         mock_popen = MagicMock()
-        with patch("cc_team.hooks.stop.subprocess.Popen", mock_popen):
+        with (
+            patch("cc_team.hooks.stop.subprocess.Popen", mock_popen),
+            patch("cc_team.hooks.stop._find_backend_id_tmux", return_value="%99"),
+        ):
             from cc_team.hooks.stop import main
 
             main()  # Should not raise (exits 0)
 
         mock_popen.assert_called_once()
-        call_args = mock_popen.call_args
-        assert call_args[0][0] == ["cct", "relay"]
+        cmd = mock_popen.call_args[0][0]
+        assert cmd[:2] == ["cct", "relay"]
+        assert "--handoff" in cmd
+        assert paths["handoff"] in cmd
+        assert "--backend-id" in cmd
+        assert "%99" in cmd
 
     def test_handoff_with_team_name_launches_team_relay(
         self,
@@ -162,8 +169,10 @@ class TestStopMain:
 
             main()
 
-        call_args = mock_popen.call_args
-        assert call_args[0][0] == ["cct", "--team-name", "my-team", "team", "relay"]
+        cmd = mock_popen.call_args[0][0]
+        assert cmd[:5] == ["cct", "--team-name", "my-team", "team", "relay"]
+        assert "--handoff" in cmd
+        assert paths["handoff"] in cmd
 
     def test_subagent_skips(
         self,

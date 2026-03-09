@@ -1,109 +1,109 @@
 """Unit tests for cct setup command.
 
 Covers:
-- Default: prints plugin directory path
-- --install: creates symlink at expected location
-- _find_plugin_dir: installed vs editable mode
+- Default: prints install instructions
+- --install: merges hooks into settings.local.json
+- _merge_hooks_into_settings: merge logic
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
-from cc_team.cli import _find_plugin_dir, main
+from cc_team.cli import _CCT_HOOKS_CONFIG, _merge_hooks_into_settings, main
 
 
-class TestFindPluginDir:
-    """_find_plugin_dir resolution tests."""
+class TestMergeHooksIntoSettings:
+    """_merge_hooks_into_settings unit tests."""
 
-    def setup_method(self) -> None:
-        """Clear lru_cache before each test."""
-        _find_plugin_dir.cache_clear()
+    def test_creates_new_file(self, tmp_path: Path) -> None:
+        """Creates settings file from scratch when it does not exist."""
+        settings = tmp_path / ".claude" / "settings.local.json"
+        result = _merge_hooks_into_settings(settings)
 
-    def test_installed_mode(self, tmp_path: Path) -> None:
-        """Returns package-internal plugin/ when it exists."""
-        pkg_dir = tmp_path / "cc_team"
-        pkg_dir.mkdir()
-        plugin_dir = pkg_dir / "plugin"
-        plugin_dir.mkdir()
-        cli_py = pkg_dir / "cli.py"
-        cli_py.touch()
+        assert result["status"] == "installed"
+        data = json.loads(settings.read_text())
+        assert data["hooks"] == _CCT_HOOKS_CONFIG["hooks"]
+        assert data["statusLine"] == _CCT_HOOKS_CONFIG["statusLine"]
 
-        with patch("cc_team.cli.__file__", str(cli_py)):
-            result = _find_plugin_dir()
-        assert result == str(plugin_dir)
+    def test_preserves_existing_keys(self, tmp_path: Path) -> None:
+        """Existing settings keys are preserved after merge."""
+        settings = tmp_path / "settings.local.json"
+        settings.write_text(json.dumps({"env": {"FOO": "bar"}, "other": 123}))
 
-    def test_editable_mode(self, tmp_path: Path) -> None:
-        """Falls back to project_root/plugin/ in editable/dev mode."""
-        src = tmp_path / "src" / "cc_team"
-        src.mkdir(parents=True)
-        cli_py = src / "cli.py"
-        cli_py.touch()
-        project_plugin = tmp_path / "plugin"
-        # Note: dir may not exist yet in dev checkout; function returns path regardless
-        with patch("cc_team.cli.__file__", str(cli_py)):
-            result = _find_plugin_dir()
-        assert result == str(project_plugin)
+        _merge_hooks_into_settings(settings)
+
+        data = json.loads(settings.read_text())
+        assert data["env"] == {"FOO": "bar"}
+        assert data["other"] == 123
+        assert data["hooks"] == _CCT_HOOKS_CONFIG["hooks"]
+
+    def test_already_configured(self, tmp_path: Path) -> None:
+        """Returns already_configured when hooks match exactly."""
+        settings = tmp_path / "settings.local.json"
+        existing = {**_CCT_HOOKS_CONFIG, "env": {"X": "1"}}
+        settings.write_text(json.dumps(existing))
+
+        result = _merge_hooks_into_settings(settings)
+        assert result["status"] == "already_configured"
+
+    def test_overwrites_stale_hooks(self, tmp_path: Path) -> None:
+        """Replaces outdated hooks config with current version."""
+        settings = tmp_path / "settings.local.json"
+        settings.write_text(json.dumps({"hooks": {"Stop": []}, "statusLine": {}}))
+
+        result = _merge_hooks_into_settings(settings)
+        assert result["status"] == "installed"
+        data = json.loads(settings.read_text())
+        assert data["hooks"] == _CCT_HOOKS_CONFIG["hooks"]
 
 
 class TestSetup:
-    """cct setup tests."""
+    """cct setup CLI tests."""
 
-    def test_prints_plugin_path(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """Default mode prints plugin directory path."""
-        with patch("cc_team.cli._find_plugin_dir", return_value="/fake/plugin"):
-            main(["setup"])
+    def test_prints_instructions(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Default mode prints install instructions."""
+        main(["setup"])
 
         output = capsys.readouterr().out
-        assert "/fake/plugin" in output
-        assert "install" in output.lower()  # should mention install instructions
+        assert "cct setup --install" in output
 
-    def test_prints_plugin_path_json(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """JSON mode returns plugin_dir key."""
-        with patch("cc_team.cli._find_plugin_dir", return_value="/fake/plugin"):
-            main(["--json", "setup"])
+    def test_prints_instructions_json(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """JSON mode returns hint."""
+        main(["--json", "setup"])
 
-        import json
+        data = json.loads(capsys.readouterr().out)
+        assert "hint" in data
 
-        output = json.loads(capsys.readouterr().out)
-        assert output["plugin_dir"] == "/fake/plugin"
-
-    def test_install_creates_symlink(self, tmp_path: Path) -> None:
-        """--install creates symlink from ~/.claude/plugins/cc-team to plugin dir."""
-        fake_home = tmp_path / "home"
-        fake_plugin = tmp_path / "plugin"
-        fake_plugin.mkdir()
-
-        with (
-            patch("cc_team.cli._find_plugin_dir", return_value=str(fake_plugin)),
-            patch("pathlib.Path.home", return_value=fake_home),
-        ):
-            main(["setup", "--install"])
-
-        link = fake_home / ".claude" / "plugins" / "cc-team"
-        assert link.is_symlink()
-        assert str(link.resolve()) == str(fake_plugin.resolve())
-
-    def test_install_existing_link_noop(
+    def test_install_writes_settings(
         self,
         tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """--install with existing link is a no-op."""
-        fake_home = tmp_path / "home"
-        plugins_dir = fake_home / ".claude" / "plugins"
-        plugins_dir.mkdir(parents=True)
-        link = plugins_dir / "cc-team"
-        link.symlink_to(tmp_path)
+        """--install writes hooks into settings.local.json."""
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        main(["setup", "--install"])
 
-        with (
-            patch("cc_team.cli._find_plugin_dir", return_value=str(tmp_path)),
-            patch("pathlib.Path.home", return_value=fake_home),
-        ):
-            main(["setup", "--install"])
+        settings = tmp_path / ".claude" / "settings.local.json"
+        assert settings.exists()
+        data = json.loads(settings.read_text())
+        assert data["hooks"] == _CCT_HOOKS_CONFIG["hooks"]
+        assert "installed" in capsys.readouterr().out.lower()
+
+    def test_install_idempotent(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Second --install is a no-op."""
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        main(["setup", "--install"])
+        main(["setup", "--install"])
 
         output = capsys.readouterr().out
-        assert "already exists" in output.lower()
+        assert "already configured" in output.lower()

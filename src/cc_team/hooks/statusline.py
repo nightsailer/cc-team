@@ -88,5 +88,3 @@ def main() -> None:
         f" | {_fmt(total_used)}/{_fmt(ctx_size)}"
         f" | ${cost:.3f} | {model}"
     )
-
-

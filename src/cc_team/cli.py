@@ -21,7 +21,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
-import functools
 import json
 import os
 import pathlib
@@ -874,55 +873,84 @@ async def _cmd_relay(args: argparse.Namespace) -> None:
 # ── setup 命令 ─────────────────────────────────────────────
 
 
-@functools.lru_cache(maxsize=1)
-def _find_plugin_dir() -> str:
-    """Locate the plugin/ directory shipped with the package.
+_CCT_HOOKS_CONFIG: dict[str, object] = {
+    "hooks": {
+        "Stop": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "cct _hook stop",
+                        "timeout": 30,
+                    }
+                ]
+            }
+        ]
+    },
+    "statusLine": {
+        "type": "command",
+        "command": "cct _hook statusline",
+        "padding": 2,
+    },
+}
 
-    Checks two locations:
-    1. Inside the installed package (pip install): cc_team/plugin/
-    2. Dev/editable mode: project_root/plugin/
+
+def _merge_hooks_into_settings(settings_path: pathlib.Path) -> dict[str, str]:
+    """Merge CCT hooks/statusLine into a settings JSON file.
+
+    Reads the existing file (or starts from {}), adds the hooks and
+    statusLine keys, and writes back.  Other keys are preserved.
+
+    Returns:
+        {"status": "installed"|"already_configured", "path": str(settings_path)}
     """
-    pkg_dir = pathlib.Path(__file__).resolve().parent  # cc_team/
-    # Installed mode: plugin/ lives inside the package directory
-    candidate = pkg_dir / "plugin"
-    if candidate.is_dir():
-        return str(candidate)
-    # Dev/editable mode: walk up to project root
-    root = pkg_dir.parent.parent  # src → project root
-    return str(root / "plugin")
+    existing: dict[str, object] = {}
+    if settings_path.exists():
+        try:
+            existing = json.loads(settings_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            existing = {}
+
+    # Check if already configured
+    if (
+        existing.get("hooks") == _CCT_HOOKS_CONFIG["hooks"]
+        and existing.get("statusLine") == _CCT_HOOKS_CONFIG["statusLine"]
+    ):
+        return {"status": "already_configured", "path": str(settings_path)}
+
+    existing["hooks"] = _CCT_HOOKS_CONFIG["hooks"]
+    existing["statusLine"] = _CCT_HOOKS_CONFIG["statusLine"]
+
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text(
+        json.dumps(existing, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return {"status": "installed", "path": str(settings_path)}
 
 
 async def _cmd_setup(args: argparse.Namespace) -> None:
-    """Print plugin path or install symlink."""
-    plugin_dir = _find_plugin_dir()
-
+    """Install CCT hooks into project settings, or show instructions."""
     if getattr(args, "install", False):
-        plugins_home = pathlib.Path.home() / ".claude" / "plugins"
-        link_path = plugins_home / "cc-team"
-        plugins_home.mkdir(parents=True, exist_ok=True)
+        proj = os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())
+        settings_path = pathlib.Path(proj) / ".claude" / "settings.local.json"
+        result = _merge_hooks_into_settings(settings_path)
 
-        if link_path.exists() or link_path.is_symlink():
-            if args.use_json:
-                _json_out({"status": "exists", "path": str(link_path)})
-            else:
-                print(f"Plugin link already exists: {link_path}")
-            return
-
-        link_path.symlink_to(plugin_dir)
         if args.use_json:
-            _json_out({"status": "installed", "path": str(link_path), "target": plugin_dir})
+            _json_out(result)
         else:
-            print(f"Plugin installed: {link_path} → {plugin_dir}")
+            if result["status"] == "already_configured":
+                print(f"CCT hooks already configured in {result['path']}")
+            else:
+                print(f"CCT hooks installed into {result['path']}")
     else:
         if args.use_json:
-            _json_out({"plugin_dir": plugin_dir})
+            _json_out({"hint": "Run 'cct setup --install' to configure hooks"})
         else:
-            print(f"Plugin directory: {plugin_dir}")
+            print("Install CCT hooks into project settings:")
+            print("  cct setup --install")
             print()
-            print("To install manually, create a symlink:")
-            print(f"  ln -s {plugin_dir} ~/.claude/plugins/cc-team")
-            print()
-            print("Or run: cct setup --install")
+            print("This adds Stop hook and statusLine to .claude/settings.local.json")
 
 
 # ── session 命令 ───────────────────────────────────────────
