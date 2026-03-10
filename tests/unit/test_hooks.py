@@ -287,16 +287,15 @@ class TestStatuslineMain:
         data.update(overrides)
         return json.dumps(data)
 
-    def test_writes_usage_with_cct_session_id(
+    def test_always_writes_usage_with_native_session_id(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """With CCT_SESSION_ID set, writes usage.json to relay paths."""
-        cct_sid = "test-statusline-write"
-        monkeypatch.setenv("CCT_SESSION_ID", cct_sid)
-        monkeypatch.setenv("CCT_PROJECT_DATA_DIR", str(tmp_path))
+        """Always writes usage.json using native session_id from hook input."""
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        monkeypatch.delenv("CCT_SESSION_ID", raising=False)
 
         input_data = self._make_input()
         monkeypatch.setattr("sys.stdin", _mock_stdin(input_data))
@@ -305,11 +304,11 @@ class TestStatuslineMain:
 
         main()
 
-        # Verify usage.json was written
-        from cc_team.hooks._common import read_json, relay_paths
+        # Verify usage.json was written using native session_id path
+        from cc_team.hooks._common import read_json
 
-        paths = relay_paths(cct_sid)
-        usage = read_json(paths["usage"])
+        usage_path = str(tmp_path / ".claude" / "cct" / "relay" / "sess-1" / "usage.json")
+        usage = read_json(usage_path)
         assert usage["session_id"] == "sess-1"
         assert usage["used_percentage"] == 45.0
         assert usage["agent_name"] == ""
@@ -318,15 +317,14 @@ class TestStatuslineMain:
         output = capsys.readouterr().out
         assert "45.0%" in output
 
-    def test_render_only_without_cct_session_id(
+    def test_renders_status_bar(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """Without CCT_SESSION_ID, renders status bar but writes no file."""
-        monkeypatch.delenv("CCT_SESSION_ID", raising=False)
-        monkeypatch.setenv("CCT_PROJECT_DATA_DIR", str(tmp_path))
+        """Renders colored status bar to stdout."""
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
 
         input_data = self._make_input()
         monkeypatch.setattr("sys.stdin", _mock_stdin(input_data))
@@ -335,13 +333,8 @@ class TestStatuslineMain:
 
         main()
 
-        # Should have rendered output
         output = capsys.readouterr().out
         assert "45.0%" in output
-
-        # No relay directory should be created
-        relay_dir = tmp_path / "relay"
-        assert not relay_dir.exists()
 
     def test_no_session_id_in_data_exits_silently(
         self,

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Statusline: Context Window Monitor for context-relay.
 
-If CCT_SESSION_ID is set, writes per-session usage to relay_paths()/usage.json.
-Always renders a colored progress bar to stdout.
+Writes per-session usage to relay/{session_id}/usage.json using the native
+session_id from hook input. Always renders a colored progress bar to stdout.
 
 Usage: cct _hook statusline
 """
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 
-from cc_team.hooks._common import atomic_write_json, read_hook_input, relay_paths
+from cc_team.hooks._common import atomic_write_json, project_dir, read_hook_input
 
 
 def _fmt(n: int) -> str:
@@ -48,20 +48,19 @@ def main() -> None:
     agent = data.get("agent", {})
     agent_name = agent.get("name", "")
 
-    # ---- persist per-session usage (only when CCT_SESSION_ID is set) ----
-    cct_session_id = os.environ.get("CCT_SESSION_ID", "")
-    if cct_session_id:
-        paths = relay_paths(cct_session_id)
-        atomic_write_json(
-            paths["usage"],
-            {
-                "used_percentage": round(used_pct, 2),
-                "context_window_size": ctx_size,
-                "total_used_tokens": total_used,
-                "session_id": session_id,
-                "agent_name": agent_name,
-            },
-        )
+    # ---- persist per-session usage (always, using native session_id) ----
+    proj = project_dir()
+    usage_path = os.path.join(proj, ".claude", "cct", "relay", session_id, "usage.json")
+    atomic_write_json(
+        usage_path,
+        {
+            "used_percentage": round(used_pct, 2),
+            "context_window_size": ctx_size,
+            "total_used_tokens": total_used,
+            "session_id": session_id,
+            "agent_name": agent_name,
+        },
+    )
 
     # ---- render status bar ----
     bar_w = 20
