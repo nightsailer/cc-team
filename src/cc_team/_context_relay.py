@@ -1,16 +1,15 @@
-"""Context relay: rotate Claude Code sessions with handoff context injection.
+"""Context relay: rotate Claude Code sessions with handoff as initial prompt.
 
 Provides two relay entry points:
 - relay_lead: team lead session rotation with agent sync
 - relay_agent: teammate context relay (exit + respawn)
 
-Each reads a handoff file, gracefully exits the old process, spawns a new one,
-and injects the handoff content into the fresh session.
+Each reads a handoff file, gracefully exits the old process, and spawns a new
+one with the handoff content as the initial prompt.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import time
@@ -21,7 +20,7 @@ from cc_team._spawn import spawn_agent_workflow
 from cc_team._sync import sync_member_states
 from cc_team.process_manager import ProcessManager
 from cc_team.team_manager import TeamManager
-from cc_team.tmux import ClearMode, PaneState, TmuxManager
+from cc_team.tmux import TmuxManager
 from cc_team.types import (
     DEFAULT_MODEL,
     TEAM_LEAD_AGENT_TYPE,
@@ -65,7 +64,7 @@ def _read_handoff(path: str) -> str:
 
 
 def _update_history(
-    cct_session_id: str,
+    session_id: str,
     new_cc_session_id: str | None,
     proj: str | None = None,
 ) -> None:
@@ -92,7 +91,7 @@ def _update_history(
 
     entries.append(
         {
-            "cct_session_id": cct_session_id,
+            "session_id": session_id,
             "new_cc_session_id": new_cc_session_id,
             "timestamp": int(time.time() * 1000),
         }
@@ -104,36 +103,6 @@ def _update_history(
     )
 
 
-async def _inject_handoff(
-    tmux: TmuxManager,
-    backend_id: str,
-    content: str,
-    *,
-    timeout: int = 60,
-) -> bool:
-    """Wait for the process to be ready, then inject handoff content.
-
-    Uses TmuxManager directly (not ProcessManager.send_input which requires
-    agent_name) so it works for both team lead and standalone scenarios.
-
-    Returns:
-        True if handoff was injected, False on timeout waiting for readiness.
-    """
-    ready_states = {PaneState.READY, PaneState.WAITING_INPUT, PaneState.IDLE}
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        state = await tmux.detect_state(backend_id)
-        if state in ready_states:
-            await tmux.send_command(
-                backend_id,
-                content,
-                clear_mode=ClearMode.ESCAPE,
-            )
-            return True
-        await asyncio.sleep(1)
-    return False
-
-
 # ── Entry points ────────────────────────────────────────
 
 
@@ -143,15 +112,14 @@ async def relay_lead(
     *,
     session_id: str = "",
 ) -> RelayResult:
-    """Context relay for team lead: exit + rotate session + respawn + inject handoff.
+    """Context relay for team lead: exit + rotate session + respawn with initial prompt.
 
     Steps:
     1. Graceful exit old TL
     2. Rotate session
-    3. Spawn new TL (reuse same pane via backend_id)
-    4. Inject handoff via TmuxManager
-    5. Sync member states
-    6. Update history
+    3. Spawn new TL with handoff as initial prompt via spawn_lead
+    4. Sync member states
+    5. Update history
     """
     from cc_team._handoff_templates import get_relay_prompt
 
@@ -180,26 +148,24 @@ async def relay_lead(
     # 2. Rotate session
     new_sid = await mgr.rotate_session()
 
-    # 3. Spawn new TL (reuse pane if available)
+    # 3. Spawn new TL with handoff as initial prompt
     options = SpawnLeadOptions(
         team_name=team_name,
         session_id=new_sid,
         model=request.model,
         cwd=request.cwd or os.getcwd(),
         backend_id=old_backend_id if old_backend_id else None,
+        prompt=formatted,
     )
     new_backend_id = await pm.spawn_lead(options, parent_session_id=new_sid)
     await mgr.update_member(TEAM_LEAD_AGENT_TYPE, backend_id=new_backend_id)
 
-    # 4. Inject handoff
-    injected = await _inject_handoff(tmux, new_backend_id, formatted)
-
-    # 5. Sync member states
+    # 4. Sync member states
     fresh_config = mgr.read()
     if fresh_config:
         await sync_member_states(mgr, pm, fresh_config)
 
-    # 6. Update history
+    # 5. Update history
     if session_id:
         _update_history(session_id, new_sid, proj=team_name)
 
@@ -207,7 +173,7 @@ async def relay_lead(
         old_backend_id=old_backend_id,
         new_backend_id=new_backend_id,
         session_id=session_id,
-        handoff_injected=injected,
+        handoff_injected=True,
     )
 
 

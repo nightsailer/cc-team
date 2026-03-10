@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -51,8 +51,8 @@ class TestRelayExecutorRegistry:
 
 class TestTmuxExecutorStandalone:
     @pytest.mark.asyncio
-    async def test_standalone_relay(self, tmp_path) -> None:
-        """Standalone: exit → start claude → inject handoff → update history."""
+    async def test_standalone_relay_dispatches(self, tmp_path) -> None:
+        """Standalone mode dispatches to _relay_standalone."""
         handoff = tmp_path / "handoff.md"
         handoff.write_text("# Standalone Handoff")
 
@@ -75,6 +75,52 @@ class TestTmuxExecutorStandalone:
         mock_relay.assert_awaited_once_with(ctx, request)
         assert result.new_backend_id == "%42"
         assert result.handoff_injected is True
+
+    @pytest.mark.asyncio
+    async def test_standalone_relay_uses_initial_prompt(self, tmp_path) -> None:
+        """Standalone relay passes handoff as -p flag, NOT via send-keys injection."""
+        handoff = tmp_path / "handoff.md"
+        handoff.write_text("# Standalone Handoff")
+
+        ctx = _make_ctx(RelayMode.STANDALONE, backend_id="%42")
+        request = _make_request(str(handoff))
+
+        executor = TmuxExecutor()
+        mock_tmux = MagicMock()
+        mock_tmux.send_command = AsyncMock()
+        mock_pm = MagicMock()
+        mock_pm.graceful_exit = AsyncMock()
+
+        with (
+            patch("cc_team._relay_executor.TmuxManager", return_value=mock_tmux),
+            patch("cc_team._relay_executor.ProcessManager", return_value=mock_pm),
+            patch("cc_team._relay_executor._find_claude_binary", return_value="/usr/bin/claude"),
+            patch("cc_team._relay_executor._update_history"),
+        ):
+            result = await executor._relay_standalone(ctx, request)
+
+        # Verify graceful exit was called
+        mock_pm.graceful_exit.assert_awaited_once_with("%42", timeout=10)
+
+        # Verify send_command was called exactly once (for launching new process)
+        mock_tmux.send_command.assert_awaited_once()
+        spawn_command = mock_tmux.send_command.call_args[0][1]
+
+        # The spawn command must include -p flag with the prompt
+        assert " -p " in spawn_command
+        assert "[Context Relay]" in spawn_command
+
+        # Verify result
+        assert result.handoff_injected is True
+        assert result.new_backend_id == "%42"
+
+    @pytest.mark.asyncio
+    async def test_standalone_relay_does_not_use_inject_handoff(self, tmp_path) -> None:
+        """Confirm _inject_handoff is not imported or used in _relay_executor."""
+        import cc_team._relay_executor as mod
+
+        # _inject_handoff must not be accessible from the module
+        assert not hasattr(mod, "_inject_handoff")
 
 
 class TestTmuxExecutorTeamLead:

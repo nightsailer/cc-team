@@ -72,16 +72,22 @@ def atomic_write_json(path: str, data: dict) -> None:
 def load_config(proj: str | None = None) -> dict:
     """Load context-relay config from the project directory.
 
-    Config schema: {"threshold": 80, "max_block_count": 3, "team_name": ""}
+    Config schema: {"threshold": 80, "max_block_count": 3, "team_name": "",
+                    "relay_prompt_template": null}
     """
     if proj is None:
         proj = project_dir()
     cfg = read_json(os.path.join(proj, CONFIG_REL))
-    return {
+    result: dict = {
         "threshold": cfg.get("threshold", 80),
         "max_block_count": cfg.get("max_block_count", 3),
         "team_name": cfg.get("team_name", ""),
     }
+    # Optional: custom relay prompt template (string or None).
+    relay_tpl = cfg.get("relay_prompt_template")
+    if relay_tpl is not None:
+        result["relay_prompt_template"] = relay_tpl
+    return result
 
 
 def cct_data_dir(proj: str | None = None) -> str:

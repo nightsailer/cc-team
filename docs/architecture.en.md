@@ -96,14 +96,14 @@ cc-team/
 │       ├── _relay_context.py        # RelayContext + RelayMode data models
 │       ├── _relay_executor.py       # RelayExecutor protocol + TmuxExecutor
 │       ├── _context_relay.py        # Low-level relay functions (standalone/lead/agent)
-│       ├── _handoff_templates.py    # Per-mode handoff templates + relay prompt builder
+│       ├── _handoff_templates.py    # Per-mode handoff templates + relay prompt builder (3-level priority: env > config > default)
 │       ├── _team_marker.py          # team-marker.json management
 │       │
 │       │   # === Plugin Hooks ===
 │       ├── hooks/
 │       │   ├── __init__.py
 │       │   ├── _common.py           # Shared hook utilities (relay_paths, config, read_hook_input)
-│       │   ├── session_start.py     # SessionStart hook (creates RelayContext)
+│       │   ├── session_start.py     # SessionStart hook (creates RelayContext, resolves member via backend_id)
 │       │   ├── stop.py              # Stop hook (2-phase handoff, mode-aware)
 │       │   └── statusline.py        # Context window usage monitor
 │
@@ -412,15 +412,18 @@ Both TL and Teammates use the same relay pattern. The unified `cct relay --conte
 ```
 ┌─────────────────────────────────────────────┐
 │  cct relay --context <path>                  │
-│  (or cct team relay / cct agent relay)       │
 │                                              │
 │  1. Graceful exit (/exit → poll for exit)    │
 │  2. Rotate session / Preserve identity       │
-│  3. Spawn fresh process (same config)        │
+│  3. Spawn fresh process with initial prompt  │
 │  4. Auto-recover agent states (sync)         │
 │  5. Messages preserved (file-based inbox)    │
 └─────────────────────────────────────────────┘
 ```
+
+For manual process lifecycle management (no context handoff), use:
+- `cct team restart` — restart team lead process
+- `cct agent restart --name <n>` — restart a specific agent
 
 Key design: agent identity (name, type, model, color, inbox) is preserved
 in config.json and filesystem. Only the process and context are refreshed.
@@ -431,6 +434,19 @@ in config.json and filesystem. Only the process and context are refreshed.
 - Dead + isActive=true → mark inactive
 - Dead + isActive=false → skip (no redundant write)
 
+**Session Boot Layer**
+
+Two CLI commands handle session initialization:
+
+- `cct session start` — standalone mode. Sets `CCT_RELAY_MODE=standalone` and execs claude. Relay directory and context creation are handled by the SessionStart hook, not by this command.
+- `cct session start-team --team-name <name>` — team-lead mode. Validates team exists, checks for stale markers, writes team-marker.json, sets `CCT_RELAY_MODE=team-lead` + `CCT_TEAM_NAME`, then execs claude.
+
+The SessionStart hook (`hooks/session_start.py`) runs on every Claude session start and:
+1. Determines relay mode (from env vars or team-marker.json fallback)
+2. For fallback teammate detection, resolves `member_name` by matching `TMUX_PANE` against team config members' backend_id
+3. Creates RelayContext with session metadata
+4. Auto-creates worktree team-marker if team mode confirmed by env but marker is missing
+
 **Handoff-Based Relay (v2)**
 
 The plugin system extends relay with automatic handoff:
@@ -438,8 +454,10 @@ The plugin system extends relay with automatic handoff:
 1. Statusline hook tracks context usage → writes to `usage.json`
 2. Stop hook detects usage > threshold → blocks stop, instructs handoff file creation
 3. Agent writes handoff.md with Current Task, Completed Work, Pending Work, Key Context, Next Steps
-4. Next stop → stop hook launches `cct relay --handoff` or `cct team relay --handoff` in background
-5. Relay reads handoff, exits old session, starts new one, injects handoff content
+4. Next stop → stop hook launches `cct relay --context` in background
+5. Relay reads handoff, exits old session, starts new one with handoff as **initial prompt** (all modes use initial prompt injection, no tmux send-keys for handoff)
+
+**Relay prompt 3-level priority**: The handoff content is wrapped in a relay prompt template, resolved in order: (1) `CCT_RELAY_PROMPT_TEMPLATE` env var, (2) `relay_prompt_template` key in project config (`context-relay-config.json`), (3) built-in default template.
 
 This creates a fully automatic context rotation cycle without user intervention.
 

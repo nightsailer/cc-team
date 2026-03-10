@@ -387,15 +387,18 @@ TL 和 Teammate 使用相同的接力模式。统一入口 `cct relay --context`
 ```
 ┌─────────────────────────────────────────────┐
 │  cct relay --context <path>                  │
-│  （或 cct team relay / cct agent relay）      │
 │                                              │
 │  1. 优雅退出（/exit → 轮询等待退出）           │
 │  2. 轮转会话 / 保留身份                       │
-│  3. 启动全新进程（相同配置）                   │
+│  3. 以初始提示启动全新进程                     │
 │  4. 自动恢复 Agent 状态（sync）               │
 │  5. 消息保留（基于文件的 inbox）              │
 └─────────────────────────────────────────────┘
 ```
+
+手动进程生命周期管理（无上下文交接）使用：
+- `cct team restart` — 重启 Team Lead 进程
+- `cct agent restart --name <n>` — 重启指定 Agent
 
 关键设计：Agent 身份（名称、类型、模型、颜色、收件箱）保存在 config.json 和文件系统中。仅刷新进程和上下文。
 

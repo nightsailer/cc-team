@@ -393,13 +393,67 @@ class TestTeamDestroy:
         assert read_team_marker(tmp_path) is None
 
     @pytest.mark.asyncio
+    async def test_destroy_preserves_relay_data_by_default(
+        self, manager: TeamManager, isolated_home: Path, tmp_path: Path
+    ) -> None:
+        """Default destroy preserves relay data directory."""
+        await manager.create()
+
+        # Create relay data directory with some content
+        relay_dir = tmp_path / ".claude" / "cct" / "relay"
+        relay_dir.mkdir(parents=True)
+        session_dir = relay_dir / "session-001"
+        session_dir.mkdir()
+        (session_dir / "context.json").write_text('{"key": "value"}')
+
+        await manager.destroy(project_dir=tmp_path)
+
+        # Relay data should still exist
+        assert relay_dir.exists()
+        assert (session_dir / "context.json").exists()
+
+    @pytest.mark.asyncio
+    async def test_destroy_cleans_relay_data_when_requested(
+        self, manager: TeamManager, isolated_home: Path, tmp_path: Path
+    ) -> None:
+        """clean_relay_data=True removes the relay directory."""
+        await manager.create()
+
+        # Create relay data directory with some content
+        relay_dir = tmp_path / ".claude" / "cct" / "relay"
+        relay_dir.mkdir(parents=True)
+        session_dir = relay_dir / "session-001"
+        session_dir.mkdir()
+        (session_dir / "context.json").write_text('{"key": "value"}')
+        (session_dir / "handoff.md").write_text("# Handoff")
+
+        await manager.destroy(project_dir=tmp_path, clean_relay_data=True)
+
+        # Relay data should be removed
+        assert not relay_dir.exists()
+
+    @pytest.mark.asyncio
+    async def test_destroy_clean_relay_data_no_relay_dir_is_noop(
+        self, manager: TeamManager, isolated_home: Path, tmp_path: Path
+    ) -> None:
+        """clean_relay_data=True when relay dir does not exist is a no-op."""
+        await manager.create()
+
+        # No relay directory exists
+        relay_dir = tmp_path / ".claude" / "cct" / "relay"
+        assert not relay_dir.exists()
+
+        # Should not raise
+        await manager.destroy(project_dir=tmp_path, clean_relay_data=True)
+
+    @pytest.mark.asyncio
     async def test_destroy_nonexistent_is_noop(self, manager: TeamManager) -> None:
-        """销毁不存在的团队不报错。"""
-        await manager.destroy()  # 不应抛出异常
+        """Destroying a non-existent team should not raise."""
+        await manager.destroy()  # Should not raise
 
     @pytest.mark.asyncio
     async def test_read_after_destroy_returns_none(self, manager: TeamManager) -> None:
-        """销毁后 read 返回 None。"""
+        """Read after destroy returns None."""
         await manager.create()
         await manager.destroy()
         assert manager.read() is None

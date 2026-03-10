@@ -1,7 +1,7 @@
 """Shared agent state sync logic.
 
 Extracted to avoid triplicating the bidirectional sync algorithm across
-Controller.sync_agents(), CLI ``agent sync``, and CLI ``team relay``.
+Controller.sync_agents(), CLI ``agent sync``, and CLI ``team restart``.
 
 The core loop checks each non-TL member's process liveness and reconciles
 config.json ``isActive`` with reality:

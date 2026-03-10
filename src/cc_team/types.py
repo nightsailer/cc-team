@@ -382,6 +382,7 @@ class SpawnLeadOptions:
     cwd: str = ""  # Working directory (defaults to os.getcwd() at spawn time)
     permission_mode: PermissionMode | None = None  # 权限模式
     backend_id: str | None = None  # reuse existing backend process (relay scenario)
+    prompt: str = ""  # initial prompt to pass via -p flag (relay handoff scenario)
 
 
 @dataclass

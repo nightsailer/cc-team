@@ -314,9 +314,14 @@ Rotate the lead session ID. Generates a new UUID4 (or uses the provided ID). Ret
 new_sid = await mgr.rotate_session()
 ```
 
-#### `async destroy() -> None`
+#### `async destroy(*, project_dir: str | Path | None = None, clean_relay_data: bool = False) -> None`
 
-Destroy the team and all associated directories.
+Destroy the team and all associated directories. Optionally removes the team marker and relay data.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `project_dir` | `None` | Project directory for marker cleanup |
+| `clean_relay_data` | `False` | If True, also remove `{project}/.claude/cct/relay/` directory |
 
 ---
 
@@ -770,7 +775,15 @@ from cc_team._handoff_templates import get_handoff_template, get_relay_prompt
 | Function | Description |
 |----------|-------------|
 | `get_handoff_template(mode)` | Per-mode stop hook prompt template |
-| `get_relay_prompt(context, content)` | Build relay injection prompt; honors `CCT_RELAY_PROMPT_TEMPLATE` env var |
+| `get_relay_prompt(content, *, source_path)` | Build relay injection prompt with 3-level priority |
+
+**Relay prompt 3-level priority:** The `get_relay_prompt` function resolves the template in this order:
+
+1. **Environment variable** `CCT_RELAY_PROMPT_TEMPLATE` — highest priority
+2. **Config file** `relay_prompt_template` key in `context-relay-config.json` — project-level override
+3. **Built-in default** — "[Context Relay] Handoff from previous session..."
+
+All modes (standalone, team-lead, teammate) use the initial prompt mechanism for handoff injection at process spawn time. The legacy `_inject_handoff` / tmux send-keys approach has been removed.
 
 ### Team Marker
 
@@ -787,9 +800,14 @@ A `team-marker.json` at `{project_dir}/.claude/cct/team-marker.json` records whi
 | `remove_team_marker(project_dir)` | Remove marker (no-op if missing) |
 | `check_stale_marker(project_dir, team_alive_fn)` | Detect stale/conflicting markers |
 
-### Legacy Functions
+**Marker lifecycle:**
+- Created by `cct session start-team` before launching the team lead.
+- Cleaned up by `cct team destroy`.
+- **Auto-created in worktrees** by the SessionStart hook: when env vars confirm team mode (team-lead or teammate) but no marker file exists, the hook auto-creates the marker so sub-teammates launched in the same worktree can fall back to it for mode detection.
 
-Lower-level relay functions (used internally by TmuxExecutor):
+### Internal Relay Functions
+
+Lower-level relay functions (used internally by TmuxExecutor). All modes pass handoff content as the initial prompt at process spawn time.
 
 ```python
 from cc_team._context_relay import relay_standalone, relay_lead, relay_agent
@@ -797,9 +815,9 @@ from cc_team._context_relay import relay_standalone, relay_lead, relay_agent
 
 | Function | Description |
 |----------|-------------|
-| `relay_standalone(request, backend, backend_id, tmux)` | Standalone relay (no team) |
-| `relay_lead(request, team_name)` | Team lead relay (exit + rotate + respawn + sync) |
-| `relay_agent(request, team_name, agent_name)` | Teammate relay (exit + respawn with handoff) |
+| `relay_standalone(request, backend, backend_id, tmux)` | Standalone relay: exit + respawn with handoff as initial prompt |
+| `relay_lead(request, team_name)` | Team lead relay: exit + rotate + respawn with handoff as initial prompt + sync agents |
+| `relay_agent(request, team_name, agent_name)` | Teammate relay: exit + respawn with handoff as initial prompt |
 
 ---
 
@@ -823,6 +841,10 @@ cct _hook session_start
 Related env vars: `CCT_TEAM_NAME`, `CCT_MEMBER_NAME`.
 
 Persists `RelayContext` to `relay/{session_id}/context.json`. Skips if context already exists.
+
+**Fallback member resolution:** When falling back to `team-marker.json` (no env vars), the hook resolves `member_name` by matching the current `TMUX_PANE` against team config members' `backend_id`. This allows sub-teammates in worktrees to be correctly identified.
+
+**Worktree marker auto-creation:** If env vars confirm team mode (team-lead or teammate) but no `team-marker.json` exists, the hook auto-creates the marker. This enables sub-teammates launched later in the same worktree to use the marker fallback for mode detection.
 
 ### Stop Hook (`cc_team.hooks.stop`)
 
@@ -862,7 +884,7 @@ Always writes usage data to `relay/{session_id}/usage.json` using the native ses
 | `atomic_write_json(path, data)` | Atomic write (tmp + rename) |
 | `load_config(proj)` | Read context-relay-config.json |
 | `cct_data_dir(proj)` | CCT project data directory |
-| `relay_paths(cct_session_id, proj)` | Per-session relay file paths |
+| `relay_paths(session_id, proj)` | Per-session relay file paths |
 
 ---
 
@@ -1050,38 +1072,49 @@ cct relay --context <path-to-context.json> [--handoff <path>] [--model <model>] 
 
 This is the primary relay interface. The stop hook launches `cct relay --context <path>` automatically.
 
-### `cct team relay`
+### `cct team restart`
 
-Context relay for Team Lead (legacy subcommand). Exit old TL, rotate session, spawn new TL, auto-recover agent states.
+Restart team lead process: graceful exit old TL, rotate session, spawn new TL, sync agent states. This is an operational command for process lifecycle management, NOT context relay. For context relay, use `cct relay --context`.
 
 ```bash
-cct --team-name <name> team relay [--model <model>] [--timeout <seconds>]
+cct --team-name <name> team restart [--model <model>] [--timeout <seconds>]
 ```
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `--model` | `claude-sonnet-4-6` | Model for new TL |
 | `--timeout` | `30` | Exit wait timeout in seconds |
-| `--handoff` | — | Path to handoff file for context injection |
 
 **Output** (JSON): `old_session`, `new_session`, `old_backend_id`, `new_backend_id`, `agents.synced`, `agents.recovered`, `agents.inactive`
 
-### `cct agent relay`
+### `cct agent restart`
 
-Context relay for a teammate (legacy subcommand). Exit old process, respawn with fresh context.
+Restart a teammate process: graceful exit, remove old member, respawn with original or new prompt. This is an operational command for process lifecycle management, NOT context relay. For context relay, use `cct relay --context`.
 
 ```bash
-cct --team-name <name> agent relay --name <agent> [--prompt <new-prompt>] [--timeout <seconds>]
+cct --team-name <name> agent restart --name <agent> [--prompt <new-prompt>] [--model <model>] [--timeout <seconds>]
 ```
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `--name` | (required) | Agent name |
 | `--prompt` | (reuse original) | New prompt for the agent |
+| `--model` | `claude-sonnet-4-6` | Model |
 | `--timeout` | `30` | Exit wait timeout in seconds |
-| `--handoff` | — | Path to handoff file for context injection |
 
 **Output** (JSON): `name`, `old_backend_id`, `new_backend_id`, `prompt`, `color`
+
+### `cct team destroy`
+
+Destroy a team and all associated resources (config, task files, inbox directories, team marker). By default, relay data (`{project}/.claude/cct/relay/`) is preserved for post-mortem analysis. Use `--clean-relay-data` to remove it.
+
+```bash
+cct --team-name <name> team destroy [--clean-relay-data]
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `--clean-relay-data` | `false` | Also remove `{project}/.claude/cct/relay/` directory |
 
 ### `cct agent sync`
 
@@ -1107,13 +1140,25 @@ cct setup [--install]
 
 ### `cct session start`
 
-Start a new Claude session with relay env vars set.
+Start a new Claude session in standalone mode with relay env vars set.
 
 ```bash
 cct session start [-- <claude-args>...]
 ```
 
-Creates relay directory structure and replaces the current process with `claude`.
+Sets `CCT_RELAY_MODE=standalone` and replaces the current process with `claude`. Relay directory and context creation are handled by the SessionStart hook, not by this command.
+
+### `cct session start-team`
+
+Start a new Claude session in team-lead mode. Requires `--team-name`.
+
+```bash
+cct session start-team --team-name <name> [-- <claude-args>...]
+```
+
+Flow: validate team exists, check for stale markers, write `team-marker.json`, set `CCT_RELAY_MODE=team-lead` + `CCT_TEAM_NAME`, exec `claude`.
+
+Does NOT create relay directory (SessionStart hook's responsibility). Does NOT set `CCT_SESSION_ID` (removed by design).
 
 ### Environment Variables
 
@@ -1122,8 +1167,12 @@ Creates relay directory structure and replaces the current process with `claude`
 | `CCT_RELAY_MODE` | Override relay mode: `standalone`, `team-lead`, `teammate` |
 | `CCT_TEAM_NAME` | Team name (used with `CCT_RELAY_MODE`) |
 | `CCT_MEMBER_NAME` | Member name (used with `CCT_RELAY_MODE=teammate`) |
-| `CCT_RELAY_PROMPT_TEMPLATE` | Custom relay injection prompt template (receives `{content}`) |
+| `CCT_RELAY_PROMPT_TEMPLATE` | Custom relay injection prompt template (receives `{content}`). Overrides config file and default |
 | `CCT_PROJECT_DATA_DIR` | Override CCT data directory (default: `{project}/.claude/cct/`) |
+
+> **Note:** `CCT_SESSION_ID` has been removed. All session identification now uses the native Claude Code `session_id` from hook input.
+
+> **Config file alternative:** The relay prompt template can also be set via the `relay_prompt_template` key in `context-relay-config.json`. Priority: env var (`CCT_RELAY_PROMPT_TEMPLATE`) > config file (`relay_prompt_template`) > built-in default.
 
 ---
 

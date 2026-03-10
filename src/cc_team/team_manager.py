@@ -368,8 +368,19 @@ class TeamManager:
 
     # ── 销毁 ────────────────────────────────────────────────
 
-    async def destroy(self, *, project_dir: str | Path | None = None) -> None:
-        """销毁团队（删除 config.json、inboxes、tasks 目录）。"""
+    async def destroy(
+        self,
+        *,
+        project_dir: str | Path | None = None,
+        clean_relay_data: bool = False,
+    ) -> None:
+        """Destroy team resources (config.json, inboxes, tasks directories).
+
+        Args:
+            project_dir: Project directory for marker cleanup.
+            clean_relay_data: If True, also remove {project}/.claude/cct/relay/ directory.
+                Relay data is preserved by default for post-mortem analysis.
+        """
         import shutil
 
         team_dir = paths.team_dir(self._team_name)
@@ -385,3 +396,10 @@ class TeamManager:
             from cc_team._team_marker import remove_team_marker
 
             remove_team_marker(project_dir)
+
+            if clean_relay_data:
+                from cc_team.hooks._common import cct_data_dir
+
+                relay_dir = Path(cct_data_dir(str(project_dir))) / "relay"
+                if relay_dir.exists():
+                    shutil.rmtree(relay_dir)

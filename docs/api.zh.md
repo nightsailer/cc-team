@@ -314,9 +314,14 @@ member = await mgr.register_member(name="worker", backend_type="tmux")
 new_sid = await mgr.rotate_session()
 ```
 
-#### `async destroy() -> None`
+#### `async destroy(*, project_dir: str | Path | None = None, clean_relay_data: bool = False) -> None`
 
-销毁团队及所有关联目录。
+销毁团队及所有关联目录。可选地移除团队标记和接力数据。
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `project_dir` | `None` | 用于标记清理的项目目录 |
+| `clean_relay_data` | `False` | 若为 True，同时删除 `{project}/.claude/cct/relay/` 目录 |
 
 ---
 
@@ -679,16 +684,71 @@ is_ready = await pm.detect_ready("%42", timeout=60)
 
 上下文接力模块，用于轮转 Claude Code 会话并注入交接上下文。
 
+### RelayContext
+
+单一事实来源，表示一个接力会话。由 SessionStart hook 在每个 Claude Code 会话开始时创建一次，持久化到 `relay/{session_id}/context.json`，供所有后续 hook 和统一 relay 命令读取。
+
 ```python
-from cc_team._context_relay import RelayRequest, RelayResult, relay_standalone, relay_lead, relay_agent
+from cc_team._relay_context import RelayContext, RelayMode
 ```
+
+```python
+class RelayMode(str, Enum):
+    STANDALONE = "standalone"
+    TEAM_LEAD = "team-lead"
+    TEAMMATE = "teammate"
+```
+
+```python
+@dataclass
+class RelayContext:
+    session_id: str             # 原生 Claude Code 会话 ID
+    mode: RelayMode             # standalone / team-lead / teammate
+    team_name: str | None       # 团队名称（standalone 时为 None）
+    member_name: str | None     # 成员名称（standalone/lead 时为 None）
+    backend_type: str           # "tmux"
+    backend_id: str | None      # tmux pane ID（如 "%42"）
+    project_dir: str            # CLAUDE_PROJECT_DIR 或 cwd
+    created_at: int             # Unix 毫秒时间戳
+    created_by: str             # "session-start-hook"
+```
+
+| 属性 | 类型 | 说明 |
+|------|------|------|
+| `relay_dir` | `str` | `{project_dir}/.claude/cct/relay/{session_id}` |
+| `handoff_path` | `str` | `relay_dir/handoff.md` |
+| `usage_path` | `str` | `relay_dir/usage.json` |
+| `context_path` | `str` | `relay_dir/context.json` |
+
+| 方法 | 说明 |
+|------|------|
+| `save(path)` | 原子写入 context 到 JSON |
+| `load(path) -> RelayContext \| None` | 从 JSON 加载，缺失时返回 None |
+
+### RelayExecutor（Protocol）
+
+可插拔的接力执行后端。根据 RelayContext 中的 `backend_type` 选择。
+
+```python
+from cc_team._relay_executor import RelayExecutor, TmuxExecutor, get_executor
+```
+
+```python
+class RelayExecutor(Protocol):
+    async def execute(self, context: RelayContext, request: RelayRequest) -> RelayResult: ...
+```
+
+| 执行器 | 后端类型 | 说明 |
+|--------|---------|------|
+| `TmuxExecutor` | `"tmux"` | 通过 tmux 分派到 standalone/lead/agent 接力 |
+
+`get_executor(backend_type: str) -> RelayExecutor` — 工厂函数，按类型获取执行器。
 
 ### RelayRequest
 
 ```python
 @dataclass
 class RelayRequest:
-    cct_session_id: str      # CCT 会话追踪 ID
     handoff_path: str        # 交接文件路径
     model: str = "claude-sonnet-4-6"
     timeout: int = 30        # 优雅退出超时（秒）
@@ -702,37 +762,62 @@ class RelayRequest:
 class RelayResult:
     old_backend_id: str | None   # 旧 tmux pane ID
     new_backend_id: str          # 新 tmux pane ID
-    cct_session_id: str          # CCT 会话追踪 ID
+    session_id: str              # 会话 ID
     handoff_injected: bool = False  # 是否已注入交接内容
 ```
 
-### 函数
+### 交接模板
 
-#### `async relay_standalone(request, backend, backend_id, tmux) -> RelayResult`
+```python
+from cc_team._handoff_templates import get_handoff_template, get_relay_prompt
+```
 
-独立 Claude 进程的上下文接力（无团队）。步骤：
-1. 优雅退出旧会话
-2. 在同一 pane 中构建并发送新 claude 命令
-3. 等待就绪 + 注入交接内容
-4. 更新历史记录
+| 函数 | 说明 |
+|------|------|
+| `get_handoff_template(mode)` | 按模式返回 stop hook 提示模板 |
+| `get_relay_prompt(content, *, source_path)` | 构建接力注入提示，支持三级优先级 |
 
-#### `async relay_lead(request, team_name) -> RelayResult`
+**接力提示三级优先级：** `get_relay_prompt` 函数按以下顺序解析模板：
 
-Team Lead 的上下文接力。步骤：
-1. 优雅退出旧 TL
-2. 轮转会话
-3. 启动新 TL（复用同一 pane）
-4. 通过 TmuxManager 注入交接内容
-5. 同步成员状态
-6. 更新历史记录
+1. **环境变量** `CCT_RELAY_PROMPT_TEMPLATE` — 最高优先级
+2. **配置文件** `context-relay-config.json` 中的 `relay_prompt_template` 键 — 项目级覆盖
+3. **内置默认值** — "[Context Relay] Handoff from previous session..."
 
-#### `async relay_agent(request, team_name, agent_name) -> RelayResult`
+所有模式（standalone、team-lead、teammate）均在进程启动时通过初始提示（initial prompt）机制注入交接内容。旧的 `_inject_handoff` / tmux send-keys 方式已被移除。
 
-Teammate 的上下文接力。步骤：
-1. 优雅退出 Agent
-2. 从配置中移除成员
-3. 通过 spawn_agent_workflow 重新启动，交接内容作为 prompt
-4. 更新历史记录
+### 团队标记（Team Marker）
+
+```python
+from cc_team._team_marker import write_team_marker, read_team_marker, remove_team_marker
+```
+
+`team-marker.json` 位于 `{project_dir}/.claude/cct/team-marker.json`，记录哪个团队拥有该项目目录。供 SessionStart hook 用于团队模式检测。
+
+| 函数 | 说明 |
+|------|------|
+| `write_team_marker(project_dir, team_name)` | 原子写入标记 |
+| `read_team_marker(project_dir) -> dict \| None` | 读取标记或返回 None |
+| `remove_team_marker(project_dir)` | 移除标记（不存在时为空操作） |
+| `check_stale_marker(project_dir, team_alive_fn)` | 检测过期/冲突标记 |
+
+**标记生命周期：**
+- 由 `cct session start-team` 在启动 Team Lead 前创建。
+- 由 `cct team destroy` 清理。
+- **工作树自动创建：** SessionStart hook 在环境变量确认团队模式（team-lead 或 teammate）但不存在标记文件时，自动创建标记，使后续在同一工作树中启动的子 Teammate 能够通过标记回退检测模式。
+
+### 内部接力函数
+
+底层接力函数（由 TmuxExecutor 内部调用）。所有模式在进程启动时通过初始提示传递交接内容。
+
+```python
+from cc_team._context_relay import relay_standalone, relay_lead, relay_agent
+```
+
+| 函数 | 说明 |
+|------|------|
+| `relay_standalone(request, backend, backend_id, tmux)` | 独立接力：退出 + 以交接内容作为初始提示重启 |
+| `relay_lead(request, team_name)` | Team Lead 接力：退出 + 轮转 + 以交接内容作为初始提示重启 + 同步 Agent |
+| `relay_agent(request, team_name, agent_name)` | Teammate 接力：退出 + 以交接内容作为初始提示重启 |
 
 ---
 
@@ -740,26 +825,45 @@ Teammate 的上下文接力。步骤：
 
 Claude Code 插件 hooks，用于自动上下文接力。
 
+### SessionStart Hook（`cc_team.hooks.session_start`）
+
+在每个 Claude Code 会话开始时创建 RelayContext。根据环境变量或 team-marker.json 回退确定接力模式。
+
+```bash
+cct _hook session_start
+```
+
+**模式检测优先级**：
+1. `CCT_RELAY_MODE` 环境变量（显式模式：`standalone`、`team-lead`、`teammate`）
+2. 项目目录中的 `team-marker.json`（工作树 / 子 Teammate 的回退）
+3. 默认：`standalone`
+
+相关环境变量：`CCT_TEAM_NAME`、`CCT_MEMBER_NAME`。
+
+将 `RelayContext` 持久化到 `relay/{session_id}/context.json`。若上下文已存在则跳过。
+
+**回退成员解析：** 当回退到 `team-marker.json`（无环境变量）时，hook 通过将当前 `TMUX_PANE` 与团队配置成员的 `backend_id` 匹配来解析 `member_name`。这使得工作树中的子 Teammate 能被正确识别。
+
+**工作树标记自动创建：** 如果环境变量确认团队模式（team-lead 或 teammate）但不存在 `team-marker.json`，hook 会自动创建标记。这使得后续在同一工作树中启动的子 Teammate 能使用标记回退进行模式检测。
+
 ### Stop Hook（`cc_team.hooks.stop`）
 
 两阶段交接机制：
 
-- **阶段 1**（无交接文件）：当上下文使用率超过阈值时，阻止停止并指示编写交接文件
-- **阶段 2**（交接文件存在）：在后台启动接力并允许停止
+- **阶段 1**（无交接文件）：当上下文使用率超过阈值时，阻止停止并显示按模式定制的交接指令（模板来自 `_handoff_templates.py`）
+- **阶段 2**（交接文件存在）：在后台启动统一 `cct relay --context <path>` 命令并允许停止
 
 ```bash
-# 由 Claude Code 插件系统自动调用
 cct _hook stop
 ```
 
-使用 hook input 中的原生 `session_id` 定位接力目录。子 Agent 自动跳过。
+使用 hook input 中的原生 `session_id`。读取 RelayContext 以实现模式特定行为。子 Agent 自动跳过。
 
 ### Statusline Hook（`cc_team.hooks.statusline`）
 
 渲染彩色进度条显示上下文窗口使用率：
 
 ```bash
-# 从 stdin 读取 JSON，输出格式化状态行
 cct _hook statusline
 ```
 
@@ -774,12 +878,13 @@ cct _hook statusline
 | 函数 | 说明 |
 |------|------|
 | `project_dir()` | CLAUDE_PROJECT_DIR，回退到 cwd |
+| `read_hook_input()` | 解析 stdin 中的 JSON hook 输入 |
 | `read_json(path)` | 读取 JSON 文件，出错时返回 `{}` |
 | `write_json(path, data)` | 写入 dict 为 JSON，自动创建目录 |
 | `atomic_write_json(path, data)` | 原子写入（tmp + rename） |
 | `load_config(proj)` | 读取 context-relay-config.json |
 | `cct_data_dir(proj)` | CCT 项目数据目录 |
-| `relay_paths(cct_session_id, proj)` | 每会话接力文件路径 |
+| `relay_paths(session_id, proj)` | 每会话接力文件路径 |
 
 ---
 
@@ -950,38 +1055,49 @@ class AgentBackend(Protocol):
 
 ## CLI 参考（会话管理）
 
-### `cct team relay`
+### `cct team restart`
 
-Team Lead 上下文接力：退出旧 TL，轮转会话，启动新 TL，自动恢复 Agent 状态。
+重启 Team Lead 进程：优雅退出旧 TL，轮转会话，启动新 TL，同步 Agent 状态。此命令用于进程生命周期管理，不是上下文接力。上下文接力请使用 `cct relay --context`。
 
 ```bash
-cct --team-name <name> team relay [--model <model>] [--timeout <seconds>]
+cct --team-name <name> team restart [--model <model>] [--timeout <seconds>]
 ```
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `--model` | `claude-sonnet-4-6` | 新 TL 的模型 |
 | `--timeout` | `30` | 退出等待超时（秒） |
-| `--handoff` | — | 交接文件路径，用于上下文注入 |
 
 **输出**（JSON）：`old_session`, `new_session`, `old_backend_id`, `new_backend_id`, `agents.synced`, `agents.recovered`, `agents.inactive`
 
-### `cct agent relay`
+### `cct agent restart`
 
-Teammate 上下文接力：退出旧进程，使用全新上下文重新启动。
+重启 Teammate 进程：优雅退出，移除旧成员，使用原始或新 prompt 重新启动。此命令用于进程生命周期管理，不是上下文接力。上下文接力请使用 `cct relay --context`。
 
 ```bash
-cct --team-name <name> agent relay --name <agent> [--prompt <new-prompt>] [--timeout <seconds>]
+cct --team-name <name> agent restart --name <agent> [--prompt <new-prompt>] [--model <model>] [--timeout <seconds>]
 ```
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `--name` | （必填） | Agent 名称 |
 | `--prompt` | （沿用原始） | Agent 的新 prompt |
+| `--model` | `claude-sonnet-4-6` | 模型 |
 | `--timeout` | `30` | 退出等待超时（秒） |
-| `--handoff` | — | 交接文件路径，用于上下文注入 |
 
 **输出**（JSON）：`name`, `old_backend_id`, `new_backend_id`, `prompt`, `color`
+
+### `cct team destroy`
+
+销毁团队及所有关联资源（配置、任务文件、收件箱目录、团队标记）。默认情况下，接力数据（`{project}/.claude/cct/relay/`）会被保留以便事后分析。使用 `--clean-relay-data` 可一并清除。
+
+```bash
+cct --team-name <name> team destroy [--clean-relay-data]
+```
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--clean-relay-data` | `false` | 同时删除 `{project}/.claude/cct/relay/` 目录 |
 
 ### `cct agent sync`
 
@@ -1024,13 +1140,25 @@ cct setup [--install]
 
 ### `cct session start`
 
-启动带接力环境变量的新 Claude 会话（`CCT_RELAY_MODE=standalone`）。
+以独立模式启动带接力环境变量的新 Claude 会话。
 
 ```bash
 cct session start [-- <claude-args>...]
 ```
 
-创建接力目录结构，设置 `CCT_RELAY_MODE` 环境变量，并用 `claude` 替换当前进程。
+设置 `CCT_RELAY_MODE=standalone` 并用 `claude` 替换当前进程。接力目录和上下文的创建由 SessionStart hook 负责，不由此命令处理。
+
+### `cct session start-team`
+
+以 Team Lead 模式启动新 Claude 会话。需要 `--team-name`。
+
+```bash
+cct session start-team --team-name <name> [-- <claude-args>...]
+```
+
+流程：验证团队存在 → 检查过期标记 → 写入 `team-marker.json` → 设置 `CCT_RELAY_MODE=team-lead` + `CCT_TEAM_NAME` → exec `claude`。
+
+不创建接力目录（由 SessionStart hook 负责）。不设置 `CCT_SESSION_ID`（已移除）。
 
 ### 环境变量
 
@@ -1039,8 +1167,12 @@ cct session start [-- <claude-args>...]
 | `CCT_RELAY_MODE` | 接力模式：`standalone`、`team-lead`、`teammate` |
 | `CCT_TEAM_NAME` | 团队名称（配合 `CCT_RELAY_MODE` 使用） |
 | `CCT_MEMBER_NAME` | 成员名称（`CCT_RELAY_MODE=teammate` 时使用） |
-| `CCT_RELAY_PROMPT_TEMPLATE` | 自定义接力注入提示模板（接收 `{content}`） |
+| `CCT_RELAY_PROMPT_TEMPLATE` | 自定义接力注入提示模板（接收 `{content}`）。优先级高于配置文件和默认值 |
 | `CCT_PROJECT_DATA_DIR` | 覆盖 CCT 数据目录（默认：`{project}/.claude/cct/`） |
+
+> **注意：** `CCT_SESSION_ID` 已被移除。所有会话标识现在使用 hook input 中的原生 Claude Code `session_id`。
+
+> **配置文件替代方案：** 接力提示模板也可通过 `context-relay-config.json` 中的 `relay_prompt_template` 键设置。优先级：环境变量 (`CCT_RELAY_PROMPT_TEMPLATE`) > 配置文件 (`relay_prompt_template`) > 内置默认值。
 
 ---
 

@@ -1,9 +1,8 @@
 """Unit tests for cc_team._context_relay — core relay logic.
 
 Covers:
-- relay_lead(): rotate + spawn_lead + sync + inject
+- relay_lead(): rotate + spawn_lead + sync + initial prompt
 - relay_agent(): remove + respawn with handoff prompt
-- _inject_handoff(): detect_ready → send, timeout → False
 - _update_history(): appends correctly
 - _read_handoff() / get_relay_prompt()
 """
@@ -18,7 +17,6 @@ import pytest
 
 from cc_team._context_relay import (
     RelayRequest,
-    _inject_handoff,
     _read_handoff,
     _update_history,
     relay_agent,
@@ -105,7 +103,7 @@ class TestUpdateHistory:
         assert history_path.exists()
         entries = json.loads(history_path.read_text())
         assert len(entries) == 1
-        assert entries[0]["cct_session_id"] == "cct-1"
+        assert entries[0]["session_id"] == "cct-1"
         assert entries[0]["new_cc_session_id"] == "cc-session-1"
 
     def test_appends_multiple(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -121,48 +119,6 @@ class TestUpdateHistory:
         assert len(entries) == 2
 
 
-# ── _inject_handoff ────────────────────────────────────────
-
-
-class TestInjectHandoff:
-    """_inject_handoff() tests."""
-
-    @pytest.mark.asyncio
-    async def test_injects_when_ready(self) -> None:
-        """When pane is ready, sends handoff content."""
-        tmux = _make_mock_tmux()
-        tmux.detect_state = AsyncMock(return_value=PaneState.READY)
-
-        result = await _inject_handoff(tmux, "%42", "handoff content", timeout=5)
-
-        assert result is True
-        tmux.send_command.assert_awaited_once()
-        # Verify the content was sent
-        call_args = tmux.send_command.call_args
-        assert call_args[0][1] == "handoff content"
-
-    @pytest.mark.asyncio
-    async def test_returns_false_on_timeout(self) -> None:
-        """Returns False when pane never becomes ready."""
-        tmux = _make_mock_tmux()
-        tmux.detect_state = AsyncMock(return_value=PaneState.ACTIVE)
-
-        result = await _inject_handoff(tmux, "%42", "content", timeout=1)
-
-        assert result is False
-        tmux.send_command.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_waiting_input_state_also_works(self) -> None:
-        """WAITING_INPUT state also triggers injection."""
-        tmux = _make_mock_tmux()
-        tmux.detect_state = AsyncMock(return_value=PaneState.WAITING_INPUT)
-
-        result = await _inject_handoff(tmux, "%42", "content", timeout=5)
-
-        assert result is True
-
-
 # ── relay_lead ─────────────────────────────────────────────
 
 
@@ -171,7 +127,7 @@ class TestRelayLead:
 
     @pytest.mark.asyncio
     async def test_rotate_spawn_sync(self, tmp_path: Path) -> None:
-        """relay_lead calls graceful_exit, rotate, spawn_lead, sync."""
+        """relay_lead calls graceful_exit, rotate, spawn_lead with prompt, sync."""
         handoff = tmp_path / "handoff.md"
         handoff.write_text("# Lead Handoff")
 
@@ -214,11 +170,6 @@ class TestRelayLead:
             patch("cc_team._context_relay.ProcessManager", return_value=mock_pm),
             patch("cc_team._context_relay.TeamManager", return_value=mock_mgr),
             patch(
-                "cc_team._context_relay._inject_handoff",
-                new_callable=AsyncMock,
-                return_value=True,
-            ),
-            patch(
                 "cc_team._context_relay.sync_member_states",
                 new_callable=AsyncMock,
             ),
@@ -230,6 +181,65 @@ class TestRelayLead:
         mock_mgr.rotate_session.assert_awaited_once()
         mock_pm.spawn_lead.assert_awaited_once()
         assert result.new_backend_id == "%5"
+        assert result.handoff_injected is True
+
+    @pytest.mark.asyncio
+    async def test_lead_relay_passes_prompt_to_spawn_lead(self, tmp_path: Path) -> None:
+        """relay_lead passes handoff prompt via SpawnLeadOptions.prompt, NOT _inject_handoff."""
+        handoff = tmp_path / "handoff.md"
+        handoff.write_text("# Lead Handoff Content")
+
+        request = _make_request(handoff_path=str(handoff))
+
+        from cc_team.types import TEAM_LEAD_AGENT_TYPE, TeamConfig, TeamMember
+
+        mock_member = TeamMember(
+            agent_id="team-lead@test",
+            name=TEAM_LEAD_AGENT_TYPE,
+            agent_type=TEAM_LEAD_AGENT_TYPE,
+            model="claude-sonnet-4-6",
+            joined_at=0,
+            backend_id="%5",
+            cwd="/workspace",
+        )
+        mock_config = TeamConfig(
+            name="test-team",
+            description="test",
+            created_at=0,
+            lead_agent_id="team-lead@test",
+            lead_session_id="old-sid",
+            members=[mock_member],
+        )
+
+        mock_mgr = MagicMock()
+        mock_mgr.read.return_value = mock_config
+        mock_mgr.rotate_session = AsyncMock(return_value="new-sid")
+        mock_mgr.update_member = AsyncMock()
+
+        mock_pm = MagicMock()
+        mock_pm.graceful_exit = AsyncMock()
+        mock_pm.spawn_lead = AsyncMock(return_value="%5")
+
+        mock_tmux = _make_mock_tmux()
+
+        with (
+            patch("cc_team._context_relay.TmuxManager", return_value=mock_tmux),
+            patch("cc_team._context_relay.ProcessManager", return_value=mock_pm),
+            patch("cc_team._context_relay.TeamManager", return_value=mock_mgr),
+            patch(
+                "cc_team._context_relay.sync_member_states",
+                new_callable=AsyncMock,
+            ),
+            patch("cc_team._context_relay._update_history"),
+        ):
+            await relay_lead(request, "test-team")
+
+        # Verify spawn_lead received options with prompt field set
+        spawn_call = mock_pm.spawn_lead.call_args
+        spawn_options = spawn_call[0][0]  # first positional arg = SpawnLeadOptions
+        assert spawn_options.prompt != ""
+        assert "[Context Relay]" in spawn_options.prompt
+        assert "Lead Handoff Content" in spawn_options.prompt
 
 
 # ── relay_agent ────────────────────────────────────────────

@@ -46,11 +46,9 @@ def write_team_marker(
 def read_team_marker(project_dir: str | Path) -> dict[str, Any] | None:
     """Read the team marker file. Returns None if it doesn't exist."""
     path = marker_path(project_dir)
-    if not path.exists():
-        return None
     try:
         return json.loads(path.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
-    except (json.JSONDecodeError, OSError):
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
         return None
 
 

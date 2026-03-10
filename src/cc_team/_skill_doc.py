@@ -7,7 +7,7 @@ AI agents (e.g. via ``cct skill``).
 
 from __future__ import annotations
 
-SKILL_DOC_VERSION: str = "0.3.0"
+SKILL_DOC_VERSION: str = "0.4.0"
 
 SKILL_SECTIONS: list[dict[str, str]] = [
     {
@@ -34,22 +34,23 @@ SKILL_SECTIONS: list[dict[str, str]] = [
             "  Create a new team.\n\n"
             "cct --team-name <t> team info\n"
             "  Show team info (members, description).\n\n"
-            "cct --team-name <t> team destroy\n"
-            "  Destroy a team and all associated resources.\n\n"
+            "cct --team-name <t> team destroy [--clean-relay-data]\n"
+            "  Destroy a team and all associated resources.\n"
+            "  Use --clean-relay-data to also remove relay session data under\n"
+            "  {project}/.claude/cct/relay/. By default relay data is preserved.\n\n"
             "cct --team-name <t> team takeover [--model <m>] [--pane-id <p>] [--force]\n"
             "  Takeover team lead: rotate session + spawn new TL process.\n"
             "  Use --force to override a still-running TL. --pane-id reuses an existing pane.\n\n"
-            "cct --team-name <t> team relay [--model <m>]\n"
-            "  Context relay: gracefully stop old TL (/exit), rotate session, spawn new TL.\n"
-            "  Waits up to 30s for old TL to exit.\n\n"
+            "cct --team-name <t> team restart [--model <m>] [--timeout <s>]\n"
+            "  Restart team lead process: graceful exit old TL, rotate session,\n"
+            "  spawn new TL, sync agent states. This is a process lifecycle management\n"
+            "  command (e.g. when TL crashed). NOT context relay — use\n"
+            "  'cct relay --context' for context relay.\n\n"
             "cct --team-name <t> team session [--rotate] [--set <id>]\n"
             "  Query or manage the lead session ID.\n"
             "  No flags: print current session ID.\n"
             "  --rotate: generate a new UUID session ID.\n"
-            "  --set <id>: set a specific session ID.\n\n"
-            "cct --team-name <t> team relay --handoff <path> [--model <m>] [--timeout <s>]\n"
-            "  Context relay with handoff: exit old TL, spawn new TL, inject handoff content.\n"
-            "  The handoff file content is automatically injected into the new session."
+            "  --set <id>: set a specific session ID."
         ),
     },
     {
@@ -74,10 +75,12 @@ SKILL_SECTIONS: list[dict[str, str]] = [
             "  Alive agents are marked as synced; dead agents are marked inactive.\n\n"
             "cct --team-name <t> agent kill --name <n>\n"
             "  Force kill an agent process and remove from team.\n\n"
-            "cct --team-name <t> agent relay --name <n> --handoff <path>\n"
-            "    [--model <m>] [--timeout <s>]\n"
-            "  Context relay with handoff: exit agent, respawn with "
-            "handoff as initial prompt."
+            "cct --team-name <t> agent restart --name <n> [--prompt <p>] "
+            "[--model <m>] [--timeout <s>]\n"
+            "  Restart a teammate process: graceful exit, remove old member,\n"
+            "  respawn with original prompt (or new prompt via --prompt).\n"
+            "  This is a process lifecycle management command (e.g. when agent\n"
+            "  crashed). NOT context relay — use 'cct relay --context' for that."
         ),
     },
     {
@@ -146,9 +149,15 @@ SKILL_SECTIONS: list[dict[str, str]] = [
         "title": "Session Command",
         "content": (
             "cct session start [-- <claude-args>...]\n"
-            "  Start a new Claude session with relay environment variables set\n"
-            "  (CCT_RELAY_MODE=standalone). Creates relay directory structure and passes\n"
-            "  through any extra args to claude. No --team-name required."
+            "  Start a new Claude session in standalone mode with\n"
+            "  CCT_RELAY_MODE=standalone. Passes through extra args to claude.\n"
+            "  Relay directory and context creation are handled by the\n"
+            "  SessionStart hook, not by this command. No --team-name required.\n\n"
+            "cct session start-team --team-name <t> [-- <claude-args>...]\n"
+            "  Start a new Claude session in team-lead mode. Validates team\n"
+            "  exists, checks for stale team markers, writes team-marker.json,\n"
+            "  sets CCT_RELAY_MODE=team-lead and CCT_TEAM_NAME, then execs claude.\n"
+            "  Relay directory creation is the SessionStart hook's responsibility."
         ),
     },
     {
@@ -175,18 +184,22 @@ SKILL_SECTIONS: list[dict[str, str]] = [
             "--- Session Management ---\n\n"
             "7. Takeover (new TL replaces old):\n"
             "   cct --team-name proj team takeover --force\n\n"
-            "8. Context relay (graceful TL rotation):\n"
-            "   cct --team-name proj team relay\n\n"
-            "9. Register external agent (no process):\n"
-            "   cct --team-name proj agent register --name external-bot\n\n"
-            "10. Sync agent liveness:\n"
-            "   cct --team-name proj agent sync\n\n"
+            "8. Restart TL process (e.g. after crash):\n"
+            "   cct --team-name proj team restart\n\n"
+            "9. Restart an agent process:\n"
+            "   cct --team-name proj agent restart --name researcher\n\n"
+            "10. Register external agent (no process):\n"
+            "    cct --team-name proj agent register --name external-bot\n\n"
+            "11. Sync agent liveness:\n"
+            "    cct --team-name proj agent sync\n\n"
             "--- Context Relay with Handoff ---\n\n"
-            "11. Start a tracked session:\n"
+            "12. Start a standalone tracked session:\n"
             "    cct session start\n\n"
-            "12. Unified relay (all modes):\n"
+            "13. Start a team-lead session:\n"
+            "    cct session start-team --team-name proj\n\n"
+            "14. Unified relay (all modes):\n"
             "    cct relay --context .claude/cct/relay/<session-id>/context.json\n\n"
-            "13. Install plugin for automatic relay:\n"
+            "15. Install plugin for automatic relay:\n"
             "    cct setup --install"
         ),
     },
@@ -211,8 +224,15 @@ SKILL_SECTIONS: list[dict[str, str]] = [
             "  RelayContext to determine mode and backend automatically.\n"
             "- Use 'setup --install' to enable automatic context relay "
             "via Claude Code plugin hooks.\n"
-            "- 'session start' sets CCT_RELAY_MODE for context tracking "
-            "across relays.\n"
+            "- The SessionStart hook handles relay directory and context\n"
+            "  creation automatically — 'session start' just sets env vars.\n"
+            "- 'session start-team' is the standard way to start a team\n"
+            "  session — it writes team-marker.json and sets env vars.\n"
+            "- 'team restart' / 'agent restart' are for manual process\n"
+            "  lifecycle management (e.g. crash recovery), not context relay.\n"
+            "- Relay prompt template can be customized via config file\n"
+            "  (relay_prompt_template key) or env var (CCT_RELAY_PROMPT_TEMPLATE).\n"
+            "  Priority: env var > config file > built-in default.\n"
             "- The stop hook writes handoff.md; relay reads it from the "
             "context directory.\n"
             "- The plugin Stop hook blocks stop when context usage exceeds "

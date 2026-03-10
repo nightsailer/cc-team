@@ -26,13 +26,13 @@ import os
 import pathlib
 import sys
 import uuid
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from cc_team._relay_context import RelayMode
 from cc_team.types import DEFAULT_MODEL
 
 if TYPE_CHECKING:
-    from cc_team._context_relay import RelayRequest, RelayResult
+    from cc_team._context_relay import RelayResult
     from cc_team.team_manager import TeamManager
     from cc_team.types import TeamConfig, TeamMember
 
@@ -124,7 +124,9 @@ async def _cmd_team_destroy(args: argparse.Namespace) -> None:
 
     name = _require_team(args)
     mgr = TeamManager(name)
-    await mgr.destroy()
+    clean_relay = getattr(args, "clean_relay_data", False)
+    project_dir = os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())
+    await mgr.destroy(project_dir=project_dir, clean_relay_data=clean_relay)
     if not args.quiet:
         print(f"Team '{name}' destroyed.")
 
@@ -211,18 +213,6 @@ async def _graceful_exit_pane(pane_id: str, timeout: int, label: str = "pane") -
         sys.exit(1)
 
 
-def _build_relay_request(args: argparse.Namespace) -> RelayRequest:
-    """Build a RelayRequest from CLI args (shared by all relay handoff paths)."""
-    from cc_team._context_relay import RelayRequest
-
-    return RelayRequest(
-        handoff_path=args.handoff,
-        model=getattr(args, "model", DEFAULT_MODEL),
-        timeout=args.timeout,
-        cwd=os.getcwd(),
-    )
-
-
 def _print_relay_result(
     args: argparse.Namespace,
     result: RelayResult,
@@ -230,7 +220,7 @@ def _print_relay_result(
     label: str = "Relay",
     extra_json: dict[str, object] | None = None,
 ) -> None:
-    """Format and print a RelayResult (shared by all relay handoff paths)."""
+    """Format and print a RelayResult (used by unified relay command)."""
     if args.use_json:
         data: dict[str, object] = {
             "old_backend_id": result.old_backend_id,
@@ -248,24 +238,14 @@ def _print_relay_result(
         print(f"  Handoff injected: {result.handoff_injected}")
 
 
-async def _cmd_team_relay(args: argparse.Namespace) -> None:
+async def _cmd_team_restart(args: argparse.Namespace) -> None:
+    """Restart team lead process: graceful exit + rotate session + spawn new TL + sync agents.
+
+    This is a process lifecycle management command, NOT context relay.
+    Context relay is handled by ``cct relay --context``.
+    """
     name = _require_team(args)
 
-    # When --handoff is provided, delegate to _context_relay.relay_lead
-    handoff = getattr(args, "handoff", None)
-    if handoff:
-        from cc_team._context_relay import relay_lead
-
-        request = _build_relay_request(args)
-        try:
-            result = await relay_lead(request, name)
-        except (FileNotFoundError, TimeoutError) as e:
-            _error(str(e))
-            sys.exit(1)
-        _print_relay_result(args, result, label="Team relay")
-        return
-
-    # Original logic (no handoff)
     from cc_team._sync import sync_member_states
     from cc_team.process_manager import ProcessManager
     from cc_team.types import TEAM_LEAD_AGENT_TYPE
@@ -316,7 +296,7 @@ async def _cmd_team_relay(args: argparse.Namespace) -> None:
             }
         )
     else:
-        print("Relay complete:")
+        print("Restart complete:")
         print(f"  Session: {old_session[:8]} → {new_sid[:8]}")
         old_bid = lead.backend_id if lead else "N/A"
         print(f"  Backend: {old_bid} → {new_bid}")
@@ -509,25 +489,14 @@ async def _cmd_agent_sync(args: argparse.Namespace) -> None:
         print(f"Agents: {', '.join(parts)}")
 
 
-async def _cmd_agent_relay(args: argparse.Namespace) -> None:
-    """Context relay for a teammate: exit old process + respawn."""
+async def _cmd_agent_restart(args: argparse.Namespace) -> None:
+    """Restart a teammate process: graceful exit + remove old + respawn.
+
+    This is a process lifecycle management command, NOT context relay.
+    Context relay is handled by ``cct relay --context``.
+    """
     team = _require_team(args)
 
-    # When --handoff is provided, delegate to _context_relay.relay_agent
-    handoff = getattr(args, "handoff", None)
-    if handoff:
-        from cc_team._context_relay import relay_agent
-
-        request = _build_relay_request(args)
-        try:
-            result = await relay_agent(request, team, args.name)
-        except (FileNotFoundError, ValueError, TimeoutError) as e:
-            _error(str(e))
-            sys.exit(1)
-        _print_relay_result(args, result, label="Agent relay", extra_json={"name": args.name})
-        return
-
-    # Original logic (no handoff)
     from cc_team._spawn import spawn_agent_workflow
     from cc_team.process_manager import ProcessManager
     from cc_team.types import SpawnAgentOptions
@@ -544,7 +513,7 @@ async def _cmd_agent_relay(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     if not member.backend_id:
-        _error(f"Agent '{args.name}' has no backend process to relay")
+        _error(f"Agent '{args.name}' has no backend process to restart")
         sys.exit(1)
 
     old_backend = member.backend_id
@@ -567,7 +536,7 @@ async def _cmd_agent_relay(args: argparse.Namespace) -> None:
         name=member.name,
         prompt=prompt,
         agent_type=member.agent_type,
-        model=member.model,
+        model=getattr(args, "model", None) or member.model,
         cwd=agent_cwd,
     )
 
@@ -594,7 +563,7 @@ async def _cmd_agent_relay(args: argparse.Namespace) -> None:
             }
         )
     else:
-        print("Agent relay complete:")
+        print("Agent restart complete:")
         print(f"  Old backend: {old_backend}")
         print(f"  New backend: {new_backend}")
         print(f"  Prompt: ({prompt_status})")
@@ -970,30 +939,20 @@ async def _cmd_setup(args: argparse.Namespace) -> None:
 # ── session 命令 ───────────────────────────────────────────
 
 
-def _cmd_session_start(args: argparse.Namespace) -> None:
-    """Start a new Claude session with relay env vars set.
+def _exec_claude_session(
+    args: argparse.Namespace,
+    env_overrides: dict[str, str],
+    label: str,
+) -> None:
+    """Build env, extract passthrough args, and exec claude.
 
-    Sets CCT_SESSION_ID (legacy compat) and CCT_RELAY_MODE=standalone.
-    This is synchronous — os.execvpe replaces the current process.
+    Common helper for session start commands. Sets env vars from
+    *env_overrides* and replaces the process with claude.
     """
-    from cc_team.hooks._common import relay_paths
     from cc_team.process_manager import _find_claude_binary
 
-    cct_sid = str(uuid.uuid4())
-    proj = os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())
-
-    # Create relay directory and init history.json
-    paths = relay_paths(cct_sid, proj)
-    os.makedirs(paths["dir"], exist_ok=True)
-
-    history_data = {"sessions": [], "created_at": datetime.now(timezone.utc).isoformat()}
-    with open(paths["history"], "w") as f:
-        json.dump(history_data, f, indent=2)
-
-    # Prepare env with CCT_SESSION_ID and CCT_RELAY_MODE
     env = os.environ.copy()
-    env["CCT_SESSION_ID"] = cct_sid
-    env["CCT_RELAY_MODE"] = "standalone"
+    env.update(env_overrides)
 
     # Passthrough args for claude
     passthrough = getattr(args, "claude_args", []) or []
@@ -1003,9 +962,78 @@ def _cmd_session_start(args: argparse.Namespace) -> None:
 
     claude_bin = _find_claude_binary()
     if not getattr(args, "quiet", False):
-        print(f"Starting session: {cct_sid}", file=sys.stderr)
+        print(label, file=sys.stderr)
 
     os.execvpe(claude_bin, [claude_bin, *passthrough], env)
+
+
+def _cmd_session_start(args: argparse.Namespace) -> None:
+    """Start a new Claude session in standalone mode.
+
+    Sets CCT_RELAY_MODE=standalone. Relay directory and context creation
+    are handled by the SessionStart hook, not by this command.
+    """
+    _exec_claude_session(
+        args,
+        {"CCT_RELAY_MODE": RelayMode.STANDALONE.value},
+        "Starting standalone session",
+    )
+
+
+def _cmd_session_start_team(args: argparse.Namespace) -> None:
+    """Start a new Claude session in team-lead mode.
+
+    Flow:
+    1. Validate --team-name is provided and team config exists
+    2. check_stale_marker() — abort if active, clean if stale
+    3. write_team_marker(project_dir, team_name)
+    4. Set env: CCT_RELAY_MODE=team-lead, CCT_TEAM_NAME=<name>
+    5. os.execvpe(claude, args, env)
+
+    Does NOT create relay directory (SessionStart hook's responsibility).
+    """
+    from cc_team._team_marker import (
+        TeamMarkerConflictError,
+        check_stale_marker,
+        remove_team_marker,
+        write_team_marker,
+    )
+    from cc_team.team_manager import TeamManager
+
+    team_name = _require_team(args)
+
+    proj = os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())
+
+    # Validate team exists
+    mgr = TeamManager(team_name)
+    config = mgr.read()
+    if config is None:
+        _error(f"Team '{team_name}' not found. Run 'cct team create --name {team_name}' first.")
+        sys.exit(1)
+
+    # Check stale marker
+    try:
+        stale = check_stale_marker(proj)
+        if stale:
+            # Stale marker from dead team — clean up and proceed
+            stale_name = stale["teamName"]
+            print(
+                f"Warning: stale marker for team '{stale_name}' found, cleaning up.",
+                file=sys.stderr,
+            )
+            remove_team_marker(proj)
+    except TeamMarkerConflictError as e:
+        _error(str(e))
+        sys.exit(1)
+
+    # Write marker
+    write_team_marker(proj, team_name, created_by="cct-session-start-team")
+
+    _exec_claude_session(
+        args,
+        {"CCT_RELAY_MODE": RelayMode.TEAM_LEAD.value, "CCT_TEAM_NAME": team_name},
+        f"Starting team-lead session for team: {team_name}",
+    )
 
 
 # ── Parser 构建 ───────────────────────────────────────────
@@ -1042,6 +1070,12 @@ def _build_parser() -> argparse.ArgumentParser:
     ti.set_defaults(func=_cmd_team_info)
 
     td = team_sub.add_parser("destroy", help="Destroy a team and all resources")
+    td.add_argument(
+        "--clean-relay-data",
+        action="store_true",
+        default=False,
+        help="Also remove relay data directory ({project}/.claude/cct/relay/)",
+    )
     td.set_defaults(func=_cmd_team_destroy)
 
     tko = team_sub.add_parser("takeover", help="Takeover team lead (rotate session + spawn TL)")
@@ -1050,14 +1084,13 @@ def _build_parser() -> argparse.ArgumentParser:
     tko.add_argument("--force", action="store_true", help="Force takeover even if TL is running")
     tko.set_defaults(func=_cmd_team_takeover)
 
-    trl = team_sub.add_parser(
-        "relay",
-        help="Context relay (stop old TL + rotate session + spawn new TL)",
+    trs = team_sub.add_parser(
+        "restart",
+        help="Restart team lead: graceful exit + rotate session + spawn new TL + sync agents",
     )
-    trl.add_argument("--model", default=DEFAULT_MODEL, help="Model for new team lead")
-    trl.add_argument("--timeout", type=int, default=30, help="Exit wait timeout in seconds")
-    trl.add_argument("--handoff", help="Path to handoff file for context injection")
-    trl.set_defaults(func=_cmd_team_relay)
+    trs.add_argument("--model", default=DEFAULT_MODEL, help="Model for new team lead")
+    trs.add_argument("--timeout", type=int, default=30, help="Exit wait timeout in seconds")
+    trs.set_defaults(func=_cmd_team_restart)
 
     tss = team_sub.add_parser("session", help="Query or rotate team lead session ID")
     tss.add_argument("--rotate", action="store_true", help="Generate new UUID session ID")
@@ -1102,16 +1135,15 @@ def _build_parser() -> argparse.ArgumentParser:
     asd.add_argument("--reason", default="CLI shutdown request", help="Shutdown reason")
     asd.set_defaults(func=_cmd_agent_shutdown)
 
-    arl = agent_sub.add_parser(
-        "relay",
-        help="Context relay: exit + respawn agent with fresh context",
+    ars = agent_sub.add_parser(
+        "restart",
+        help="Restart agent: graceful exit + respawn with original or new prompt",
     )
-    arl.add_argument("--name", required=True, help="Agent name")
-    arl.add_argument("--prompt", help="New prompt (default: reuse original)")
-    arl.add_argument("--model", default=DEFAULT_MODEL, help="Model for respawned agent")
-    arl.add_argument("--timeout", type=int, default=30, help="Exit wait timeout (seconds)")
-    arl.add_argument("--handoff", help="Path to handoff file for context injection")
-    arl.set_defaults(func=_cmd_agent_relay)
+    ars.add_argument("--name", required=True, help="Agent name")
+    ars.add_argument("--prompt", help="New prompt (default: reuse original)")
+    ars.add_argument("--model", default=DEFAULT_MODEL, help="Model for respawned agent")
+    ars.add_argument("--timeout", type=int, default=30, help="Exit wait timeout (seconds)")
+    ars.set_defaults(func=_cmd_agent_restart)
 
     asyn = agent_sub.add_parser(
         "sync",
@@ -1202,6 +1234,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Arguments to pass through to claude",
     )
     ss.set_defaults(func=_cmd_session_start, is_sync=True)
+
+    sst = sess_sub.add_parser("start-team", help="Start Claude as team lead with relay env vars")
+    sst.add_argument(
+        "claude_args",
+        nargs=argparse.REMAINDER,
+        help="Arguments to pass through to claude",
+    )
+    sst.set_defaults(func=_cmd_session_start_team, is_sync=True)
 
     # ── skill (no --team-name required) ──────
     sk = sub.add_parser("skill", help="Print AI agent skill reference document")

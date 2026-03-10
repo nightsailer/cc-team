@@ -839,12 +839,13 @@ cct relay --context <path-to-context.json> [--handoff <path>] [--model <model>] 
 
 The stop hook launches `cct relay --context <path>` automatically.
 
-### `cct team relay`
+### `cct team restart`
 
-Context relay for Team Lead: exit old TL, rotate session, spawn new TL, and auto-recover agent states.
+Restart team lead process: graceful exit old TL, rotate session, spawn new TL, sync agent states.
+This is an operational command for process lifecycle management, NOT context relay.
 
 ```bash
-cct --team-name <name> team relay [--model <model>] [--timeout <seconds>]
+cct --team-name <name> team restart [--model <model>] [--timeout <seconds>]
 ```
 
 | Parameter | Default | Description |
@@ -854,18 +855,20 @@ cct --team-name <name> team relay [--model <model>] [--timeout <seconds>]
 
 **Output** (JSON): `old_session`, `new_session`, `old_backend_id`, `new_backend_id`, `agents.synced`, `agents.recovered`, `agents.inactive`
 
-### `cct agent relay`
+### `cct agent restart`
 
-Context relay for a teammate: exit old process, respawn with fresh context.
+Restart a teammate process: graceful exit, remove old member, respawn with original or new prompt.
+This is an operational command for process lifecycle management, NOT context relay.
 
 ```bash
-cct --team-name <name> agent relay --name <agent> [--prompt <new-prompt>] [--timeout <seconds>]
+cct --team-name <name> agent restart --name <agent> [--prompt <new-prompt>] [--model <m>] [--timeout <seconds>]
 ```
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `--name` | (required) | Agent name |
 | `--prompt` | (reuse original) | New prompt for the agent |
+| `--model` | `claude-sonnet-4-6` | Model |
 | `--timeout` | `30` | Exit wait timeout in seconds |
 
 **Output** (JSON): `name`, `old_backend_id`, `new_backend_id`, `prompt`, `color`

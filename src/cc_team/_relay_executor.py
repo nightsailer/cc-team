@@ -11,7 +11,6 @@ from typing import Protocol
 from cc_team._context_relay import (
     RelayRequest,
     RelayResult,
-    _inject_handoff,
     _read_handoff,
     _update_history,
     relay_agent,
@@ -51,7 +50,7 @@ class TmuxExecutor:
         context: RelayContext,
         request: RelayRequest,
     ) -> RelayResult:
-        """Standalone relay: exit old → start new → inject handoff."""
+        """Standalone relay: exit old → start new with handoff as initial prompt."""
         handoff_text = _read_handoff(request.handoff_path)
         prompt = get_relay_prompt(handoff_text, source_path=request.handoff_path)
 
@@ -65,17 +64,14 @@ class TmuxExecutor:
         # 1. Graceful exit
         await pm.graceful_exit(backend_id, timeout=request.timeout)
 
-        # 2. Build and launch new claude in the same pane
-        cli_args = [_find_claude_binary(), "--model", request.model]
+        # 2. Build and launch new claude with handoff as initial prompt (-p flag)
+        cli_args = [_find_claude_binary(), "--model", request.model, "-p", prompt]
         cwd = request.cwd or context.project_dir
         relay_env = {"CCT_RELAY_MODE": context.mode.value}
         command = _build_spawn_command(cwd, cli_args, relay_env=relay_env)
         await tmux.send_command(backend_id, command)
 
-        # 3. Wait for readiness + inject handoff
-        injected = await _inject_handoff(tmux, backend_id, prompt, timeout=60)
-
-        # 4. Update history
+        # 3. Update history
         if context.session_id:
             _update_history(context.session_id, None)
 
@@ -83,7 +79,7 @@ class TmuxExecutor:
             old_backend_id=backend_id,
             new_backend_id=backend_id,
             session_id=context.session_id,
-            handoff_injected=injected,
+            handoff_injected=True,
         )
 
     async def _relay_lead(

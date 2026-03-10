@@ -279,6 +279,10 @@ class ProcessManager:
         if options.permission_mode is not None:
             _add_permission_args(args, options.permission_mode)
 
+        # Add initial prompt if provided (relay handoff scenario)
+        if options.prompt:
+            args.extend(["-p", options.prompt])
+
         return args
 
     async def spawn_lead(

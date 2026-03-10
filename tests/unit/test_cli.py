@@ -664,35 +664,35 @@ class TestTeamTakeover:
         assert lead.backend_id == "%60"
 
 
-# ── team relay ─────────────────────────────────────────────
+# ── team restart ───────────────────────────────────────────
 
 
-class TestTeamRelay:
-    """team relay CLI 测试。"""
+class TestTeamRestart:
+    """team restart CLI tests."""
 
     @pytest.mark.asyncio
-    async def test_relay_team_not_found_exits(self, isolated_home: Path) -> None:
-        """团队不存在时 exit(1)。"""
+    async def test_restart_team_not_found_exits(self, isolated_home: Path) -> None:
+        """Exit(1) when team does not exist."""
         parser = _build_parser()
         args = parser.parse_args(
             [
                 "--team-name",
                 "ghost",
                 "team",
-                "relay",
+                "restart",
             ]
         )
         with pytest.raises(SystemExit):
             await args.func(args)
 
     @pytest.mark.asyncio
-    async def test_relay_normal_flow(
+    async def test_restart_normal_flow(
         self,
         team: TeamManager,
         isolated_home: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """Normal relay: exit old TL + rotate session + spawn new TL + sync agents."""
+        """Normal restart: exit old TL + rotate session + spawn new TL + sync agents."""
         old_config = team.read()
         assert old_config is not None
         old_sid = old_config.lead_session_id
@@ -703,7 +703,7 @@ class TestTeamRelay:
                 "--team-name",
                 "test-team",
                 "team",
-                "relay",
+                "restart",
             ]
         )
 
@@ -713,7 +713,7 @@ class TestTeamRelay:
         ):
             mock_pm = MockPM.return_value
             mock_pm.spawn_lead = AsyncMock(return_value="%70")
-            # Mock for post-relay sync step
+            # Mock for post-restart sync step
             mock_pm.track = lambda name, bid: None
             mock_pm.is_running = AsyncMock(return_value=True)
             mock_pm.untrack = lambda name: None
@@ -731,16 +731,16 @@ class TestTeamRelay:
         assert lead.backend_id == "%70"
 
         captured = capsys.readouterr()
-        assert "Relay complete" in captured.out
+        assert "Restart complete" in captured.out
 
     @pytest.mark.asyncio
-    async def test_relay_post_sync_recovers_agents(
+    async def test_restart_post_sync_recovers_agents(
         self,
         team: TeamManager,
         isolated_home: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """Post-relay sync should recover inactive-but-alive agents."""
+        """Post-restart sync should recover inactive-but-alive agents."""
         # Add an agent with isActive=false (simulating TL sync pollution)
         member = make_member(
             "worker-1",
@@ -760,7 +760,7 @@ class TestTeamRelay:
                 "test-team",
                 "--json",
                 "team",
-                "relay",
+                "restart",
             ]
         )
 
@@ -1100,20 +1100,20 @@ class TestAgentSync:
         assert "revived" not in data["synced"]
 
 
-# ── agent relay ───────────────────────────────────────────
+# ── agent restart ─────────────────────────────────────────
 
 
-class TestAgentRelay:
-    """agent relay CLI tests."""
+class TestAgentRestart:
+    """agent restart CLI tests."""
 
     @pytest.mark.asyncio
-    async def test_agent_relay_exits_and_respawns(
+    async def test_agent_restart_exits_and_respawns(
         self,
         team: TeamManager,
         isolated_home: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """agent relay should exit old process and respawn with preserved config."""
+        """agent restart should exit old process and respawn with preserved config."""
         # Add an active agent
         member = make_member(
             "worker-1",
@@ -1133,7 +1133,7 @@ class TestAgentRelay:
                 "test-team",
                 "--json",
                 "agent",
-                "relay",
+                "restart",
                 "--name",
                 "worker-1",
             ]
@@ -1165,13 +1165,13 @@ class TestAgentRelay:
         assert m.is_active is True
 
     @pytest.mark.asyncio
-    async def test_agent_relay_with_new_prompt(
+    async def test_agent_restart_with_new_prompt(
         self,
         team: TeamManager,
         isolated_home: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """agent relay --prompt should use the new prompt."""
+        """agent restart --prompt should use the new prompt."""
         member = make_member(
             "worker-1",
             agent_id="w@test-team",
@@ -1190,7 +1190,7 @@ class TestAgentRelay:
                 "test-team",
                 "--json",
                 "agent",
-                "relay",
+                "restart",
                 "--name",
                 "worker-1",
                 "--prompt",
@@ -1223,19 +1223,19 @@ class TestAgentRelay:
         assert any("New mission" in m.get("text", "") for m in msgs)
 
     @pytest.mark.asyncio
-    async def test_agent_relay_not_found_exits(
+    async def test_agent_restart_not_found_exits(
         self,
         team: TeamManager,
         isolated_home: Path,
     ) -> None:
-        """agent relay for nonexistent agent should exit(1)."""
+        """agent restart for nonexistent agent should exit(1)."""
         parser = _build_parser()
         args = parser.parse_args(
             [
                 "--team-name",
                 "test-team",
                 "agent",
-                "relay",
+                "restart",
                 "--name",
                 "ghost",
             ]
@@ -1244,12 +1244,12 @@ class TestAgentRelay:
             await args.func(args)
 
     @pytest.mark.asyncio
-    async def test_agent_relay_no_backend_exits(
+    async def test_agent_restart_no_backend_exits(
         self,
         team: TeamManager,
         isolated_home: Path,
     ) -> None:
-        """agent relay with no backend_id should exit(1)."""
+        """agent restart with no backend_id should exit(1)."""
         # Register agent without backend
         await team.register_member(name="no-pane", agent_type="general-purpose")
 
@@ -1259,13 +1259,55 @@ class TestAgentRelay:
                 "--team-name",
                 "test-team",
                 "agent",
-                "relay",
+                "restart",
                 "--name",
                 "no-pane",
             ]
         )
         with pytest.raises(SystemExit):
             await args.func(args)
+
+
+# ── old relay subcommands removed ─────────────────────────
+
+
+class TestOldRelaySubcommandsRemoved:
+    """Verify that 'team relay' and 'agent relay' no longer exist."""
+
+    def test_team_relay_no_longer_exists(self) -> None:
+        """'cct team relay' should produce a parse error (unrecognized subcommand)."""
+        parser = _build_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["--team-name", "t", "team", "relay"])
+
+    def test_agent_relay_no_longer_exists(self) -> None:
+        """'cct agent relay' should produce a parse error (unrecognized subcommand)."""
+        parser = _build_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["--team-name", "t", "agent", "relay", "--name", "a"])
+
+    def test_team_restart_does_not_accept_handoff(self) -> None:
+        """'cct team restart --handoff' should produce a parse error."""
+        parser = _build_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["--team-name", "t", "team", "restart", "--handoff", "/tmp/h.md"])
+
+    def test_agent_restart_does_not_accept_handoff(self) -> None:
+        """'cct agent restart --handoff' should produce a parse error."""
+        parser = _build_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(
+                [
+                    "--team-name",
+                    "t",
+                    "agent",
+                    "restart",
+                    "--name",
+                    "a",
+                    "--handoff",
+                    "/tmp/h.md",
+                ]
+            )
 
 
 class TestUnifiedRelay:

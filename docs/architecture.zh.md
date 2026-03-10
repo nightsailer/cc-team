@@ -93,13 +93,18 @@ cc-team/
 │       └── _skill_doc.py            # AI 智能体技能参考文档
 │       │
 │       │   # === 上下文接力层 ===
-│       ├── _context_relay.py        # 带交接注入的上下文接力
+│       ├── _relay_context.py        # RelayContext + RelayMode 数据模型
+│       ├── _relay_executor.py       # RelayExecutor 协议 + TmuxExecutor
+│       ├── _context_relay.py        # 底层接力函数（standalone/lead/agent）
+│       ├── _handoff_templates.py    # 按模式区分的交接模板 + 接力提示构建器（3 级优先级：env > config > default）
+│       ├── _team_marker.py          # team-marker.json 管理
 │       │
 │       │   # === 插件 Hooks ===
 │       ├── hooks/
 │       │   ├── __init__.py
-│       │   ├── _common.py           # 共享 hook 工具（relay_paths、config）
-│       │   ├── stop.py              # Stop hook（两阶段交接）
+│       │   ├── _common.py           # 共享 hook 工具（relay_paths、config、read_hook_input）
+│       │   ├── session_start.py     # SessionStart hook（创建 RelayContext，通过 backend_id 解析成员）
+│       │   ├── stop.py              # Stop hook（两阶段交接，模式感知）
 │       │   └── statusline.py        # 上下文窗口使用率监控
 │
 └── tests/                            # 1:1 映射测试文件
@@ -406,15 +411,18 @@ TL 和 Teammate 使用相同的接力模式。统一入口 `cct relay --context`
 ```
 ┌─────────────────────────────────────────────┐
 │  cct relay --context <path>                  │
-│  （或 cct team relay / cct agent relay）      │
 │                                              │
 │  1. 优雅退出（/exit → 轮询等待退出）           │
 │  2. 轮转会话 / 保留身份                       │
-│  3. 启动全新进程（相同配置）                   │
+│  3. 以初始提示启动全新进程                     │
 │  4. 自动恢复 Agent 状态（sync）               │
 │  5. 消息保留（基于文件的 inbox）              │
 └─────────────────────────────────────────────┘
 ```
+
+手动进程生命周期管理（无上下文交接）使用：
+- `cct team restart` — 重启 Team Lead 进程
+- `cct agent restart --name <n>` — 重启指定 Agent
 
 关键设计：Agent 身份（名称、类型、模型、颜色、收件箱）保存在 config.json 和文件系统中。仅刷新进程和上下文。
 
@@ -424,6 +432,19 @@ TL 和 Teammate 使用相同的接力模式。统一入口 `cct relay --context`
 - 死亡 + isActive=true → 标记不活跃
 - 死亡 + isActive=false → 跳过（避免冗余写入）
 
+**会话启动层**
+
+两个 CLI 命令处理会话初始化：
+
+- `cct session start` — 独立模式。设置 `CCT_RELAY_MODE=standalone` 并 exec claude。接力目录和上下文的创建由 SessionStart hook 负责，而非此命令。
+- `cct session start-team --team-name <name>` — Team Lead 模式。验证团队存在、检查陈旧标记、写入 team-marker.json、设置 `CCT_RELAY_MODE=team-lead` + `CCT_TEAM_NAME`，然后 exec claude。
+
+SessionStart hook（`hooks/session_start.py`）在每次 Claude 会话启动时运行：
+1. 确定接力模式（从环境变量或 team-marker.json 回退）
+2. 回退 Teammate 检测时，通过匹配 `TMUX_PANE` 与团队配置成员的 backend_id 来解析 `member_name`
+3. 创建包含会话元数据的 RelayContext
+4. 如果环境变量确认团队模式但 marker 缺失，自动在 worktree 创建 team-marker
+
 **基于交接的接力（v2）**
 
 插件系统通过自动交接扩展了接力功能：
@@ -431,8 +452,10 @@ TL 和 Teammate 使用相同的接力模式。统一入口 `cct relay --context`
 1. Statusline hook 追踪上下文使用率 → 写入 `usage.json`
 2. Stop hook 检测使用率超过阈值 → 阻止停止，指示创建交接文件
 3. Agent 编写 handoff.md，包含当前任务、已完成工作、待办工作、关键上下文、下一步
-4. 下次停止 → stop hook 在后台启动 `cct relay --handoff` 或 `cct team relay --handoff`
-5. Relay 读取交接文件，退出旧会话，启动新会话，注入交接内容
+4. 下次停止 → stop hook 在后台启动 `cct relay --context`
+5. Relay 读取交接文件，退出旧会话，以交接内容作为**初始提示**启动新会话（所有模式均使用初始提示注入，不再使用 tmux send-keys 注入交接）
+
+**接力提示 3 级优先级**：交接内容被包装在接力提示模板中，按以下顺序解析：(1) `CCT_RELAY_PROMPT_TEMPLATE` 环境变量，(2) 项目配置中的 `relay_prompt_template` 键（`context-relay-config.json`），(3) 内置默认模板。
 
 这创建了完全自动的上下文轮转循环，无需用户干预。
 

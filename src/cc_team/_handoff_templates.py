@@ -3,6 +3,8 @@
 Provides:
 - get_handoff_template(mode): stop hook prompt template per mode
 - get_relay_prompt(content): builds the injection prompt for relay
+  with 3-level priority: env var (CCT_RELAY_PROMPT_TEMPLATE) >
+  config file (relay_prompt_template key) > built-in default
 """
 
 from __future__ import annotations
@@ -58,10 +60,28 @@ def get_handoff_template(mode: RelayMode) -> str:
     return _TEMPLATES[mode]
 
 
+def _load_config_template() -> str | None:
+    """Load relay_prompt_template from project config (context-relay-config.json).
+
+    Reads the config file directly to avoid a reverse dependency from the
+    core Context Relay layer back into the Plugin (hooks) layer.
+    """
+    import json
+
+    try:
+        proj = os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())
+        config_path = os.path.join(proj, ".claude", "hooks", "context-relay-config.json")
+        with open(config_path) as f:
+            cfg = json.load(f)
+        return cfg.get("relay_prompt_template")  # type: ignore[no-any-return]
+    except (FileNotFoundError, json.JSONDecodeError, OSError, KeyError):
+        return None
+
+
 def get_relay_prompt(content: str, *, source_path: str = "") -> str:
     """Build the relay injection prompt from handoff content.
 
-    Priority: CCT_RELAY_PROMPT_TEMPLATE env var > default template.
+    Priority: CCT_RELAY_PROMPT_TEMPLATE env var > config file > default template.
     Uses str.replace to avoid format-string injection from handoff content.
 
     Args:
@@ -69,6 +89,8 @@ def get_relay_prompt(content: str, *, source_path: str = "") -> str:
         source_path: Optional path to the handoff file (included as Source line).
     """
     template = os.environ.get("CCT_RELAY_PROMPT_TEMPLATE")
+    if not template:
+        template = _load_config_template()
     if not template:
         template = _DEFAULT_RELAY_PROMPT
     result = template.replace("{content}", content)

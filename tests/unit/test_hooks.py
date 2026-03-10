@@ -243,7 +243,6 @@ class TestStatuslineMain:
     ) -> None:
         """Always writes usage.json using native session_id from hook input."""
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
-        monkeypatch.delenv("CCT_SESSION_ID", raising=False)
 
         input_data = self._make_input()
         monkeypatch.setattr("sys.stdin", _mock_stdin(input_data))
@@ -317,11 +316,9 @@ class TestHookCLI:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """cct _hook stop delegates to stop.main()."""
-        monkeypatch.delenv("CCT_SESSION_ID", raising=False)
-
         from cc_team.cli import main
 
-        # No CCT_SESSION_ID → stop.main() returns silently
+        # stop.main() returns silently when no relay context
         main(["_hook", "stop"])
 
     def test_hook_statusline_delegates_to_main(
@@ -330,7 +327,6 @@ class TestHookCLI:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """cct _hook statusline delegates to statusline.main()."""
-        monkeypatch.delenv("CCT_SESSION_ID", raising=False)
         monkeypatch.setattr("sys.stdin", _mock_stdin())
 
         from cc_team.cli import main

@@ -150,31 +150,33 @@ cct --team-name my-project agent shutdown --name researcher --reason "Done"
 # Force kill
 cct --team-name my-project agent kill --name researcher
 
-# Destroy team
-cct --team-name my-project team destroy
+# Destroy team (optionally clean relay data)
+cct --team-name my-project team destroy [--clean-relay-data]
 ```
 
 ### Session Management
 
 ```bash
-# TL context exhausted? One-command relay — teammates keep working
-cct --team-name my-project team relay
+# TL process crashed? Restart it
+cct --team-name my-project team restart
 
-# Agent context exhausted? Same concept, same simplicity
-cct --team-name my-project agent relay --name researcher
+# Agent needs fresh start?
+cct --team-name my-project agent restart --name researcher
 
 # Sync agent states after external disruption
 cct --team-name my-project agent sync
 
-# Context relay with handoff file (automatic context injection)
-cct --team-name my-project team relay --handoff handoff.md
-cct --team-name my-project agent relay --name researcher --handoff handoff.md
-
-# Unified relay (auto-dispatches via RelayContext)
+# Unified context relay (auto-dispatches via RelayContext)
 cct relay --context .claude/cct/relay/<session-id>/context.json
 
-# Start a Claude session with relay env vars
+# Start a standalone session with relay tracking
 cct session start
+
+# Start a team-lead session with relay tracking
+cct session start-team --team-name my-project
+
+# Destroy team (optionally clean relay data)
+cct --team-name my-project team destroy [--clean-relay-data]
 
 # Install CCT plugin for Claude Code hooks
 cct setup --install
@@ -210,11 +212,16 @@ cc-team/src/cc_team/
 ├── agent_handle.py       # Agent proxy object
 ├── controller.py         # Central orchestrator
 ├── cli.py                # cct CLI entry point
-├── _context_relay.py     # Context relay with handoff injection
+├── _context_relay.py     # Low-level relay functions (standalone/lead/agent)
+├── _relay_context.py     # RelayContext + RelayMode data models
+├── _relay_executor.py    # RelayExecutor protocol + TmuxExecutor
+├── _handoff_templates.py # Per-mode handoff templates + relay prompt builder
+├── _team_marker.py       # team-marker.json management
 ├── hooks/                # Claude Code plugin hooks
-│   ├── _common.py        # Shared hook utilities
-│   ├── stop.py           # Stop hook (2-phase handoff)
-│   └── statusline.py     # Context window monitor
+│   ├── _common.py        # Shared hook utilities (relay_paths, config)
+│   ├── session_start.py  # SessionStart hook (creates RelayContext)
+│   ├── stop.py           # Stop hook (2-phase handoff, mode-aware)
+│   └── statusline.py     # Context window usage monitor
 └── _skill_doc.py         # AI agent skill reference document
 
 plugin/                   # Claude Code plugin (distributable)
@@ -226,14 +233,15 @@ plugin/                   # Claude Code plugin (distributable)
 
 ```
 CLI (cli.py)
-  └─ Context Relay (_context_relay.py)
+  └─ Context Relay (_context_relay.py, _relay_context.py, _relay_executor.py,
+                     _handoff_templates.py, _team_marker.py)
   └─ Orchestration (controller.py, agent_handle.py, event_router.py)
        └─ Communication (inbox_poller.py, message_builder.py, events.py)
        └─ Process (process_manager.py, tmux.py)
        └─ Storage (team_manager.py, task_manager.py, inbox.py)
             └─ Serialization (_serialization.py, filelock.py)
                  └─ Foundation (types.py, paths.py, exceptions.py)
-Plugin (hooks/stop.py, hooks/statusline.py, hooks/_common.py)
+Plugin (hooks/session_start.py, hooks/stop.py, hooks/statusline.py, hooks/_common.py)
 ```
 
 ## Core Concepts
@@ -298,9 +306,9 @@ Claude Code agents have a 200k token context window. When exhausted, the session
 # SDK: rotate session + broadcast to agents
 new_session = await ctrl.relay()
 
-# CLI: full relay (exit old TL + rotate + spawn new TL + auto-recover agents)
-# cct --team-name my-project team relay
-# cct --team-name my-project agent relay --name worker-1
+# CLI: restart processes (exit old + spawn new + auto-recover agents)
+# cct --team-name my-project team restart
+# cct --team-name my-project agent restart --name worker-1
 ```
 
 The relay pattern preserves agent identity (name, type, model, color, inbox) while refreshing only the process and context. Bidirectional sync automatically recovers agents whose `isActive` flag was corrupted by Claude Code's internal sync.

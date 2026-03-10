@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import os
+
 import pytest
 
 from cc_team._handoff_templates import get_handoff_template, get_relay_prompt
@@ -43,3 +46,64 @@ class TestRelayPrompt:
         prompt = get_relay_prompt("test content")
         assert "test content" in prompt
         assert "[Context Relay]" in prompt
+
+
+class TestRelayPromptPriority:
+    """Test 3-level priority: env var > config file > default."""
+
+    def _write_config(self, proj: str, template: str) -> None:
+        """Write a context-relay-config.json with relay_prompt_template."""
+        config_path = os.path.join(proj, ".claude", "hooks", "context-relay-config.json")
+        os.makedirs(os.path.dirname(config_path), exist_ok=True)
+        with open(config_path, "w") as f:
+            json.dump({"relay_prompt_template": template}, f)
+
+    def test_default_template_no_env_no_config(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """No env var, no config file -> uses default template."""
+        monkeypatch.delenv("CCT_RELAY_PROMPT_TEMPLATE", raising=False)
+        # Point project dir to a non-existent path so config loading fails gracefully.
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", "/tmp/nonexistent-cct-test-dir")
+        prompt = get_relay_prompt("hello world")
+        assert "[Context Relay]" in prompt
+        assert "hello world" in prompt
+
+    def test_env_overrides_all(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: str,
+    ) -> None:
+        """Env var set -> uses env, ignores config and default."""
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        self._write_config(str(tmp_path), "Config template: {content}")
+        monkeypatch.setenv("CCT_RELAY_PROMPT_TEMPLATE", "Env wins: {content}")
+        prompt = get_relay_prompt("data")
+        assert prompt == "Env wins: data"
+
+    def test_config_overrides_default(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: str,
+    ) -> None:
+        """Config has template, no env var -> uses config."""
+        monkeypatch.delenv("CCT_RELAY_PROMPT_TEMPLATE", raising=False)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        self._write_config(str(tmp_path), "From config: {content}")
+        prompt = get_relay_prompt("data")
+        assert prompt == "From config: data"
+        assert "[Context Relay]" not in prompt
+
+    def test_env_overrides_config(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: str,
+    ) -> None:
+        """Both env and config set -> env wins."""
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        self._write_config(str(tmp_path), "Config template: {content}")
+        monkeypatch.setenv("CCT_RELAY_PROMPT_TEMPLATE", "Env template: {content}")
+        prompt = get_relay_prompt("data")
+        assert prompt == "Env template: data"
+        assert "Config" not in prompt
