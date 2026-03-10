@@ -70,3 +70,24 @@ def remove_team_marker(project_dir: str | Path) -> None:
     path = marker_path(project_dir)
     with contextlib.suppress(FileNotFoundError):
         path.unlink()
+
+
+def check_stale_marker(
+    project_dir: str | Path,
+    team_alive_fn: Any | None = None,
+) -> dict[str, Any] | None:
+    """Check for a stale team marker.
+
+    Returns:
+        None if no marker exists.
+        The marker dict if the team is stale (not alive).
+
+    Raises:
+        TeamMarkerConflictError: if the marker exists and the team is still alive.
+    """
+    marker = read_team_marker(project_dir)
+    if marker is None:
+        return None
+    if team_alive_fn and team_alive_fn(marker["teamName"]):
+        raise TeamMarkerConflictError(f"Active team '{marker['teamName']}' exists in this project")
+    return marker

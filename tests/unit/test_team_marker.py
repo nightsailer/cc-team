@@ -1,6 +1,10 @@
 """Tests for team marker file management."""
 
+import pytest
+
 from cc_team._team_marker import (
+    TeamMarkerConflictError,
+    check_stale_marker,
     marker_path,
     read_team_marker,
     remove_team_marker,
@@ -30,3 +34,26 @@ class TestTeamMarker:
     def test_marker_path(self, tmp_path):
         p = marker_path(tmp_path)
         assert str(p).endswith(".claude/cct/team-marker.json")
+
+
+class TestStaleMarkerDetection:
+    def test_no_marker_returns_none(self, tmp_path):
+        result = check_stale_marker(tmp_path)
+        assert result is None
+
+    def test_active_team_raises(self, tmp_path):
+        write_team_marker(tmp_path, "old-team")
+        with pytest.raises(TeamMarkerConflictError, match="Active"):
+            check_stale_marker(tmp_path, team_alive_fn=lambda _name: True)
+
+    def test_stale_team_returns_marker(self, tmp_path):
+        write_team_marker(tmp_path, "old-team")
+        result = check_stale_marker(tmp_path, team_alive_fn=lambda _name: False)
+        assert result is not None
+        assert result["teamName"] == "old-team"
+
+    def test_no_alive_fn_returns_marker(self, tmp_path):
+        write_team_marker(tmp_path, "old-team")
+        result = check_stale_marker(tmp_path)
+        assert result is not None
+        assert result["teamName"] == "old-team"
