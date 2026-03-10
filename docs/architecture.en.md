@@ -93,13 +93,18 @@ cc-team/
 │       └── _skill_doc.py            # AI agent skill reference document
 │       │
 │       │   # === Context Relay Layer ===
-│       ├── _context_relay.py        # Context relay with handoff injection
+│       ├── _relay_context.py        # RelayContext + RelayMode data models
+│       ├── _relay_executor.py       # RelayExecutor protocol + TmuxExecutor
+│       ├── _context_relay.py        # Low-level relay functions (standalone/lead/agent)
+│       ├── _handoff_templates.py    # Per-mode handoff templates + relay prompt builder
+│       ├── _team_marker.py          # team-marker.json management
 │       │
 │       │   # === Plugin Hooks ===
 │       ├── hooks/
 │       │   ├── __init__.py
-│       │   ├── _common.py           # Shared hook utilities (relay_paths, config)
-│       │   ├── stop.py              # Stop hook (2-phase handoff)
+│       │   ├── _common.py           # Shared hook utilities (relay_paths, config, read_hook_input)
+│       │   ├── session_start.py     # SessionStart hook (creates RelayContext)
+│       │   ├── stop.py              # Stop hook (2-phase handoff, mode-aware)
 │       │   └── statusline.py        # Context window usage monitor
 │
 └── tests/                            # 1:1 mapped test files

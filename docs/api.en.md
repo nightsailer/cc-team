@@ -679,16 +679,71 @@ is_ready = await pm.detect_ready("%42", timeout=60)
 
 Context relay module for rotating Claude Code sessions with handoff context injection.
 
+### RelayContext
+
+Single source of truth for a relay session. Created once at SessionStart, persisted to `relay/{session_id}/context.json`, and read by all subsequent hooks and the unified relay command.
+
 ```python
-from cc_team._context_relay import RelayRequest, RelayResult, relay_standalone, relay_lead, relay_agent
+from cc_team._relay_context import RelayContext, RelayMode
 ```
+
+```python
+class RelayMode(str, Enum):
+    STANDALONE = "standalone"
+    TEAM_LEAD = "team-lead"
+    TEAMMATE = "teammate"
+```
+
+```python
+@dataclass
+class RelayContext:
+    session_id: str             # Native Claude Code session ID
+    mode: RelayMode             # standalone / team-lead / teammate
+    team_name: str | None       # Team name (None for standalone)
+    member_name: str | None     # Member name (None for standalone/lead)
+    backend_type: str           # "tmux"
+    backend_id: str | None      # tmux pane ID (e.g. "%42")
+    project_dir: str            # CLAUDE_PROJECT_DIR or cwd
+    created_at: int             # Unix millisecond timestamp
+    created_by: str             # "session-start-hook"
+```
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `relay_dir` | `str` | `{project_dir}/.claude/cct/relay/{session_id}` |
+| `handoff_path` | `str` | `relay_dir/handoff.md` |
+| `usage_path` | `str` | `relay_dir/usage.json` |
+| `context_path` | `str` | `relay_dir/context.json` |
+
+| Method | Description |
+|--------|-------------|
+| `save(path)` | Atomically write context to JSON |
+| `load(path) -> RelayContext \| None` | Load from JSON, returns None if missing |
+
+### RelayExecutor (Protocol)
+
+Pluggable execution backend for relay operations. Selected by `backend_type` from RelayContext.
+
+```python
+from cc_team._relay_executor import RelayExecutor, TmuxExecutor, get_executor
+```
+
+```python
+class RelayExecutor(Protocol):
+    async def execute(self, context: RelayContext, request: RelayRequest) -> RelayResult: ...
+```
+
+| Executor | Backend Type | Description |
+|----------|-------------|-------------|
+| `TmuxExecutor` | `"tmux"` | Dispatches to standalone/lead/agent relay via tmux |
+
+`get_executor(backend_type: str) -> RelayExecutor` — factory to get executor by type.
 
 ### RelayRequest
 
 ```python
 @dataclass
 class RelayRequest:
-    cct_session_id: str      # CCT session tracking ID
     handoff_path: str        # Path to handoff file
     model: str = "claude-sonnet-4-6"
     timeout: int = 30        # Graceful exit timeout (seconds)
@@ -702,37 +757,49 @@ class RelayRequest:
 class RelayResult:
     old_backend_id: str | None   # Previous tmux pane ID
     new_backend_id: str          # New tmux pane ID
-    cct_session_id: str          # CCT session tracking ID
+    session_id: str              # Session ID
     handoff_injected: bool = False  # Whether handoff content was injected
 ```
 
-### Functions
+### Handoff Templates
 
-#### `async relay_standalone(request, backend, backend_id, tmux) -> RelayResult`
+```python
+from cc_team._handoff_templates import get_handoff_template, get_relay_prompt
+```
 
-Context relay for a standalone Claude process (no team). Steps:
-1. Graceful exit old session
-2. Build new claude command and send to same pane
-3. Wait for readiness + inject handoff content
-4. Update history
+| Function | Description |
+|----------|-------------|
+| `get_handoff_template(mode)` | Per-mode stop hook prompt template |
+| `get_relay_prompt(context, content)` | Build relay injection prompt; honors `CCT_RELAY_PROMPT_TEMPLATE` env var |
 
-#### `async relay_lead(request, team_name) -> RelayResult`
+### Team Marker
 
-Context relay for team lead. Steps:
-1. Graceful exit old TL
-2. Rotate session
-3. Spawn new TL (reuse same pane)
-4. Inject handoff via TmuxManager
-5. Sync member states
-6. Update history
+```python
+from cc_team._team_marker import write_team_marker, read_team_marker, remove_team_marker
+```
 
-#### `async relay_agent(request, team_name, agent_name) -> RelayResult`
+A `team-marker.json` at `{project_dir}/.claude/cct/team-marker.json` records which team owns a project directory. Used by SessionStart hook for team mode detection.
 
-Context relay for a teammate. Steps:
-1. Graceful exit agent
-2. Remove member from config
-3. Respawn via spawn_agent_workflow with handoff as prompt
-4. Update history
+| Function | Description |
+|----------|-------------|
+| `write_team_marker(project_dir, team_name)` | Atomically write marker |
+| `read_team_marker(project_dir) -> dict \| None` | Read marker or None |
+| `remove_team_marker(project_dir)` | Remove marker (no-op if missing) |
+| `check_stale_marker(project_dir, team_alive_fn)` | Detect stale/conflicting markers |
+
+### Legacy Functions
+
+Lower-level relay functions (used internally by TmuxExecutor):
+
+```python
+from cc_team._context_relay import relay_standalone, relay_lead, relay_agent
+```
+
+| Function | Description |
+|----------|-------------|
+| `relay_standalone(request, backend, backend_id, tmux)` | Standalone relay (no team) |
+| `relay_lead(request, team_name)` | Team lead relay (exit + rotate + respawn + sync) |
+| `relay_agent(request, team_name, agent_name)` | Teammate relay (exit + respawn with handoff) |
 
 ---
 
@@ -740,26 +807,41 @@ Context relay for a teammate. Steps:
 
 Claude Code plugin hooks for automatic context relay.
 
+### SessionStart Hook (`cc_team.hooks.session_start`)
+
+Creates the RelayContext at the start of every Claude Code session. Determines relay mode from environment variables or team-marker.json fallback.
+
+```bash
+cct _hook session_start
+```
+
+**Mode detection priority**:
+1. `CCT_RELAY_MODE` env var (explicit mode: `standalone`, `team-lead`, `teammate`)
+2. `team-marker.json` in project dir (fallback for worktrees / sub-teammates)
+3. Default: `standalone`
+
+Related env vars: `CCT_TEAM_NAME`, `CCT_MEMBER_NAME`.
+
+Persists `RelayContext` to `relay/{session_id}/context.json`. Skips if context already exists.
+
 ### Stop Hook (`cc_team.hooks.stop`)
 
 Two-phase handoff mechanism:
 
-- **Phase 1** (no handoff file): When context usage exceeds threshold, blocks stop with instructions to write a handoff file
-- **Phase 2** (handoff exists): Launches relay in background and allows stop
+- **Phase 1** (no handoff file): When context usage exceeds threshold, blocks stop with mode-aware handoff instructions (templates from `_handoff_templates.py`)
+- **Phase 2** (handoff exists): Launches unified `cct relay --context <path>` in background and allows stop
 
 ```bash
-# Invoked automatically by Claude Code plugin system
 cct _hook stop
 ```
 
-Requires `CCT_SESSION_ID` environment variable. Skips execution for subagents.
+Uses native `session_id` from hook input. Reads RelayContext for mode-specific behavior. Skips execution for subagents.
 
 ### Statusline Hook (`cc_team.hooks.statusline`)
 
 Renders a colored progress bar showing context window usage:
 
 ```bash
-# Reads JSON from stdin, outputs formatted status line
 cct _hook statusline
 ```
 
@@ -767,13 +849,14 @@ Output format: `[agent] ████░░░░ 45.2% | 90k/200k | $0.150 | cla
 
 Colors: green (<60%), yellow (60-80%), red (>80%).
 
-When `CCT_SESSION_ID` is set, persists usage data to `relay_paths()/usage.json`.
+Always writes usage data to `relay/{session_id}/usage.json` using the native session_id from hook input.
 
 ### Common Utilities (`cc_team.hooks._common`)
 
 | Function | Description |
 |----------|-------------|
 | `project_dir()` | CLAUDE_PROJECT_DIR with cwd fallback |
+| `read_hook_input()` | Parse JSON hook input from stdin |
 | `read_json(path)` | Read JSON file, return `{}` on error |
 | `write_json(path, data)` | Write dict as JSON with mkdir |
 | `atomic_write_json(path, data)` | Atomic write (tmp + rename) |
@@ -950,9 +1033,41 @@ class AgentBackend(Protocol):
 
 ## CLI Reference (Session Management)
 
+### `cct relay` (Unified)
+
+Context relay with automatic mode dispatch. Reads RelayContext to determine standalone/team-lead/teammate mode and dispatches to the appropriate executor.
+
+```bash
+cct relay --context <path-to-context.json> [--handoff <path>] [--model <model>] [--timeout <seconds>]
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `--context` | — | Path to RelayContext JSON (from `relay/{session_id}/context.json`) |
+| `--handoff` | — | Override handoff file path |
+| `--model` | `claude-sonnet-4-6` | Model for new session |
+| `--timeout` | `30` | Exit wait timeout in seconds |
+
+This is the primary relay interface. The stop hook launches `cct relay --context <path>` automatically.
+
+### `cct relay` (Legacy)
+
+Legacy standalone relay (no `--context`). Kept for backward compatibility.
+
+```bash
+cct relay --handoff <path> --backend-id <pane-id> [--model <model>] [--timeout <seconds>]
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `--handoff` | (required) | Path to handoff file |
+| `--backend-id` | (required) | Target tmux pane ID |
+| `--model` | `claude-sonnet-4-6` | Model for new session |
+| `--timeout` | `30` | Exit wait timeout in seconds |
+
 ### `cct team relay`
 
-Context relay for Team Lead: exit old TL, rotate session, spawn new TL, and auto-recover agent states.
+Context relay for Team Lead (legacy subcommand). Exit old TL, rotate session, spawn new TL, auto-recover agent states.
 
 ```bash
 cct --team-name <name> team relay [--model <model>] [--timeout <seconds>]
@@ -968,7 +1083,7 @@ cct --team-name <name> team relay [--model <model>] [--timeout <seconds>]
 
 ### `cct agent relay`
 
-Context relay for a teammate: exit old process, respawn with fresh context.
+Context relay for a teammate (legacy subcommand). Exit old process, respawn with fresh context.
 
 ```bash
 cct --team-name <name> agent relay --name <agent> [--prompt <new-prompt>] [--timeout <seconds>]
@@ -993,24 +1108,9 @@ cct --team-name <name> agent sync
 
 **Output** (JSON): `synced`, `recovered`, `inactive`
 
-### `cct relay`
-
-Standalone context relay (no team). Requires `CCT_SESSION_ID` environment variable.
-
-```bash
-cct relay --handoff <path> --backend-id <pane-id> [--model <model>] [--timeout <seconds>]
-```
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `--handoff` | (required) | Path to handoff file |
-| `--backend-id` | (required) | Target tmux pane ID |
-| `--model` | `claude-sonnet-4-6` | Model for new session |
-| `--timeout` | `30` | Exit wait timeout in seconds |
-
 ### `cct setup`
 
-Show plugin path or install symlink.
+Show plugin path or install hooks into settings.local.json.
 
 ```bash
 cct setup [--install]
@@ -1018,17 +1118,27 @@ cct setup [--install]
 
 | Parameter | Description |
 |-----------|-------------|
-| `--install` | Create symlink at `~/.claude/plugins/cc-team` |
+| `--install` | Merge hook definitions into `~/.claude/settings.local.json` |
 
 ### `cct session start`
 
-Start a new Claude session with `CCT_SESSION_ID` environment variable set.
+Start a new Claude session with relay env vars set.
 
 ```bash
 cct session start [-- <claude-args>...]
 ```
 
 Creates relay directory structure and replaces the current process with `claude`.
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `CCT_RELAY_MODE` | Override relay mode: `standalone`, `team-lead`, `teammate` |
+| `CCT_TEAM_NAME` | Team name (used with `CCT_RELAY_MODE`) |
+| `CCT_MEMBER_NAME` | Member name (used with `CCT_RELAY_MODE=teammate`) |
+| `CCT_RELAY_PROMPT_TEMPLATE` | Custom relay injection prompt template (receives `{content}`) |
+| `CCT_PROJECT_DATA_DIR` | Override CCT data directory (default: `{project}/.claude/cct/`) |
 
 ---
 
