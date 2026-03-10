@@ -88,6 +88,32 @@ class TestSessionStart:
         assert "sessions" in data
         assert "created_at" in data
 
+    def test_sets_relay_mode_standalone(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Sets CCT_RELAY_MODE=standalone in env passed to execvpe."""
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        monkeypatch.setenv("CCT_PROJECT_DATA_DIR", str(tmp_path / "cct"))
+
+        mock_execvpe = MagicMock()
+
+        with (
+            patch("cc_team.cli.os.execvpe", mock_execvpe),
+            patch("cc_team.cli.uuid.uuid4", return_value=MagicMock(__str__=lambda self: "uuid")),
+            patch(
+                "cc_team.process_manager._find_claude_binary",
+                return_value="claude",
+            ),
+        ):
+            from cc_team.cli import main
+
+            main(["--quiet", "session", "start"])
+
+        env = mock_execvpe.call_args[0][2]
+        assert env["CCT_RELAY_MODE"] == "standalone"
+
     def test_passthrough_args(
         self,
         tmp_path: Path,

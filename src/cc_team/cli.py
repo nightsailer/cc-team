@@ -967,9 +967,10 @@ def _cmd_session_start(args: argparse.Namespace) -> None:
     with open(paths["history"], "w") as f:
         json.dump(history_data, f, indent=2)
 
-    # Prepare env with CCT_SESSION_ID
+    # Prepare env with CCT_SESSION_ID and CCT_RELAY_MODE
     env = os.environ.copy()
     env["CCT_SESSION_ID"] = cct_sid
+    env["CCT_RELAY_MODE"] = "standalone"
 
     # Passthrough args for claude
     passthrough = getattr(args, "claude_args", []) or []
