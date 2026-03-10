@@ -1033,9 +1033,9 @@ class AgentBackend(Protocol):
 
 ## CLI Reference (Session Management)
 
-### `cct relay` (Unified)
+### `cct relay`
 
-Context relay with automatic mode dispatch. Reads RelayContext to determine standalone/team-lead/teammate mode and dispatches to the appropriate executor.
+Unified context relay command. Reads RelayContext JSON to determine mode (standalone/team-lead/teammate) and dispatches to the appropriate executor.
 
 ```bash
 cct relay --context <path-to-context.json> [--handoff <path>] [--model <model>] [--timeout <seconds>]
@@ -1043,27 +1043,12 @@ cct relay --context <path-to-context.json> [--handoff <path>] [--model <model>] 
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `--context` | — | Path to RelayContext JSON (from `relay/{session_id}/context.json`) |
-| `--handoff` | — | Override handoff file path |
+| `--context` | (required) | Path to RelayContext JSON (`relay/{session_id}/context.json`) |
+| `--handoff` | — | Override handoff file path (default: from context directory) |
 | `--model` | `claude-sonnet-4-6` | Model for new session |
 | `--timeout` | `30` | Exit wait timeout in seconds |
 
 This is the primary relay interface. The stop hook launches `cct relay --context <path>` automatically.
-
-### `cct relay` (Legacy)
-
-Legacy standalone relay (no `--context`). Kept for backward compatibility.
-
-```bash
-cct relay --handoff <path> --backend-id <pane-id> [--model <model>] [--timeout <seconds>]
-```
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `--handoff` | (required) | Path to handoff file |
-| `--backend-id` | (required) | Target tmux pane ID |
-| `--model` | `claude-sonnet-4-6` | Model for new session |
-| `--timeout` | `30` | Exit wait timeout in seconds |
 
 ### `cct team relay`
 

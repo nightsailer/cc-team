@@ -5,21 +5,7 @@ from __future__ import annotations
 import pytest
 
 from cc_team._handoff_templates import get_handoff_template, get_relay_prompt
-from cc_team._relay_context import RelayContext, RelayMode
-
-
-def _make_ctx(mode: RelayMode = RelayMode.STANDALONE) -> RelayContext:
-    return RelayContext(
-        session_id="test-123",
-        mode=mode,
-        team_name="my-team" if mode != RelayMode.STANDALONE else None,
-        member_name="worker" if mode == RelayMode.TEAMMATE else None,
-        backend_type="tmux",
-        backend_id=None,
-        project_dir="/tmp/proj",
-        created_at=1000,
-        created_by="test",
-    )
+from cc_team._relay_context import RelayMode
 
 
 class TestHandoffTemplates:
@@ -42,8 +28,7 @@ class TestHandoffTemplates:
 
 class TestRelayPrompt:
     def test_relay_prompt_includes_content(self) -> None:
-        ctx = _make_ctx()
-        prompt = get_relay_prompt(ctx, "handoff content here")
+        prompt = get_relay_prompt("handoff content here")
         assert "handoff content here" in prompt
 
     def test_relay_prompt_env_override(
@@ -51,16 +36,10 @@ class TestRelayPrompt:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setenv("CCT_RELAY_PROMPT_TEMPLATE", "Custom: {content}")
-        ctx = _make_ctx()
-        prompt = get_relay_prompt(ctx, "handoff content")
+        prompt = get_relay_prompt("handoff content")
         assert prompt == "Custom: handoff content"
 
-    def test_relay_prompt_standalone_mode(self) -> None:
-        ctx = _make_ctx(RelayMode.STANDALONE)
-        prompt = get_relay_prompt(ctx, "test content")
+    def test_relay_prompt_default_template(self) -> None:
+        prompt = get_relay_prompt("test content")
         assert "test content" in prompt
-
-    def test_relay_prompt_team_lead_mode(self) -> None:
-        ctx = _make_ctx(RelayMode.TEAM_LEAD)
-        prompt = get_relay_prompt(ctx, "test content")
-        assert "test content" in prompt
+        assert "[Context Relay]" in prompt

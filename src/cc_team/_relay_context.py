@@ -8,10 +8,8 @@ RelayMode indicates whether this session is standalone, team-lead, or teammate.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import os
-import tempfile
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -64,8 +62,15 @@ class RelayContext:
 
     @property
     def relay_dir(self) -> str:
-        """Base directory for this relay session's files."""
-        return os.path.join(self.project_dir, ".claude", "cct", "relay", self.session_id)
+        """Base directory for this relay session's files.
+
+        Respects CCT_PROJECT_DATA_DIR env override for consistency with
+        hooks/_common.cct_data_dir().
+        """
+        base = os.environ.get("CCT_PROJECT_DATA_DIR")
+        if not base:
+            base = os.path.join(self.project_dir, ".claude", "cct")
+        return os.path.join(base, "relay", self.session_id)
 
     @property
     def handoff_path(self) -> str:
@@ -106,26 +111,27 @@ class RelayContext:
 
     def save(self, path: str | Path) -> None:
         """Atomically write context to a JSON file."""
+        from cc_team._serialization import atomic_write_json
+
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        data = self._to_dict()
-        fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp_path, str(path))
-        except BaseException:
-            with contextlib.suppress(OSError):
-                os.unlink(tmp_path)
-            raise
+        atomic_write_json(path, self._to_dict())
 
     @classmethod
     def load(cls, path: str | Path) -> RelayContext | None:
-        """Load context from a JSON file. Returns None if file doesn't exist."""
-        path = Path(path)
-        if not path.exists():
+        """Load context from a JSON file.
+
+        Returns None if the file is missing, corrupt, or has invalid schema.
+        """
+        try:
+            data = json.loads(Path(path).read_text(encoding="utf-8"))
+            return cls._from_dict(data)
+        except (
+            FileNotFoundError,
+            json.JSONDecodeError,
+            OSError,
+            KeyError,
+            TypeError,
+            ValueError,
+        ):
             return None
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return cls._from_dict(data)

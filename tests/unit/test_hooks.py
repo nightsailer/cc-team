@@ -127,6 +127,8 @@ class TestStopMain:
         relay_dir = _setup_relay_dir(proj, sid)
         write_json(str(relay_dir / "usage.json"), {"used_percentage": 90})
         (relay_dir / "handoff.md").write_text("# Handoff content")
+        # context.json must also exist for relay to launch.
+        write_json(str(relay_dir / "context.json"), {"sessionId": sid, "mode": "standalone"})
         _setup_config(proj)
 
         mock_popen = MagicMock()

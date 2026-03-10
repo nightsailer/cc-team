@@ -1,12 +1,11 @@
 """Unit tests for cc_team._context_relay — core relay logic.
 
 Covers:
-- relay_standalone(): graceful_exit, spawn, inject, history
 - relay_lead(): rotate + spawn_lead + sync + inject
 - relay_agent(): remove + respawn with handoff prompt
 - _inject_handoff(): detect_ready → send, timeout → False
 - _update_history(): appends correctly
-- _read_handoff() / _format_handoff_prompt()
+- _read_handoff() / get_relay_prompt()
 """
 
 from __future__ import annotations
@@ -19,15 +18,13 @@ import pytest
 
 from cc_team._context_relay import (
     RelayRequest,
-    RelayResult,
-    _format_handoff_prompt,
     _inject_handoff,
     _read_handoff,
     _update_history,
     relay_agent,
     relay_lead,
-    relay_standalone,
 )
+from cc_team._handoff_templates import get_relay_prompt
 from cc_team.tmux import PaneState
 
 # ── Helpers ────────────────────────────────────────────────
@@ -53,15 +50,7 @@ def _make_mock_tmux() -> MagicMock:
     return mock
 
 
-def _make_mock_backend() -> MagicMock:
-    mock = MagicMock()
-    mock.graceful_exit = AsyncMock()
-    mock.detect_ready = AsyncMock(return_value=True)
-    mock.send_input = AsyncMock()
-    return mock
-
-
-# ── _read_handoff / _format_handoff_prompt ─────────────────
+# ── _read_handoff / get_relay_prompt ───────────────────────
 
 
 class TestReadHandoff:
@@ -79,16 +68,23 @@ class TestReadHandoff:
             _read_handoff("/nonexistent/path.md")
 
 
-class TestFormatHandoffPrompt:
-    """_format_handoff_prompt() tests."""
+class TestGetRelayPrompt:
+    """get_relay_prompt() tests."""
 
     def test_wraps_content_with_header(self) -> None:
         """Wraps content in relay context header."""
-        result = _format_handoff_prompt("Hello", "/path/to/file.md")
+        result = get_relay_prompt("Hello", source_path="/path/to/file.md")
         assert "[Context Relay]" in result
         assert "Hello" in result
         assert "/path/to/file.md" in result
         assert "Continue working" in result
+
+    def test_without_source_path(self) -> None:
+        """Works without source_path."""
+        result = get_relay_prompt("Hello")
+        assert "[Context Relay]" in result
+        assert "Hello" in result
+        assert "Source:" not in result
 
 
 # ── _update_history ────────────────────────────────────────
@@ -165,62 +161,6 @@ class TestInjectHandoff:
         result = await _inject_handoff(tmux, "%42", "content", timeout=5)
 
         assert result is True
-
-
-# ── relay_standalone ───────────────────────────────────────
-
-
-class TestRelayStandalone:
-    """relay_standalone() tests."""
-
-    @pytest.mark.asyncio
-    async def test_graceful_exit_called(self, tmp_path: Path) -> None:
-        """graceful_exit is called on the backend."""
-        handoff = tmp_path / "handoff.md"
-        handoff.write_text("# Handoff")
-
-        request = _make_request(handoff_path=str(handoff))
-        backend = _make_mock_backend()
-        tmux = _make_mock_tmux()
-
-        with (
-            patch("cc_team._context_relay._find_claude_binary", return_value="claude"),
-            patch("cc_team._context_relay._build_spawn_command", return_value="cd /w && claude"),
-            patch(
-                "cc_team._context_relay._inject_handoff",
-                new_callable=AsyncMock,
-                return_value=True,
-            ),
-            patch("cc_team._context_relay._update_history"),
-        ):
-            result = await relay_standalone(request, backend, "%10", tmux)
-
-        backend.graceful_exit.assert_awaited_once_with("%10", timeout=10)
-        assert isinstance(result, RelayResult)
-        assert result.old_backend_id == "%10"
-        assert result.new_backend_id == "%10"
-
-    @pytest.mark.asyncio
-    async def test_handoff_injected(self, tmp_path: Path) -> None:
-        """Handoff content is injected after spawning new process."""
-        handoff = tmp_path / "handoff.md"
-        handoff.write_text("# Test Handoff")
-
-        request = _make_request(handoff_path=str(handoff))
-        backend = _make_mock_backend()
-        tmux = _make_mock_tmux()
-
-        inject_mock = AsyncMock(return_value=True)
-        with (
-            patch("cc_team._context_relay._find_claude_binary", return_value="claude"),
-            patch("cc_team._context_relay._build_spawn_command", return_value="cd /w && claude"),
-            patch("cc_team._context_relay._inject_handoff", inject_mock),
-            patch("cc_team._context_relay._update_history"),
-        ):
-            result = await relay_standalone(request, backend, "%10", tmux)
-
-        assert result.handoff_injected is True
-        inject_mock.assert_awaited_once()
 
 
 # ── relay_lead ─────────────────────────────────────────────

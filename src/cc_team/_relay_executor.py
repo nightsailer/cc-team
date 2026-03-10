@@ -6,7 +6,6 @@ implementation. The executor is selected by backend_type from RelayContext.
 
 from __future__ import annotations
 
-import os
 from typing import Protocol
 
 from cc_team._context_relay import (
@@ -54,7 +53,7 @@ class TmuxExecutor:
     ) -> RelayResult:
         """Standalone relay: exit old → start new → inject handoff."""
         handoff_text = _read_handoff(request.handoff_path)
-        prompt = get_relay_prompt(context, handoff_text)
+        prompt = get_relay_prompt(handoff_text, source_path=request.handoff_path)
 
         tmux = TmuxManager()
         pm = ProcessManager(tmux=tmux)
@@ -69,16 +68,16 @@ class TmuxExecutor:
         # 2. Build and launch new claude in the same pane
         cli_args = [_find_claude_binary(), "--model", request.model]
         cwd = request.cwd or context.project_dir
-        command = _build_spawn_command(cwd, cli_args)
+        relay_env = {"CCT_RELAY_MODE": context.mode.value}
+        command = _build_spawn_command(cwd, cli_args, relay_env=relay_env)
         await tmux.send_command(backend_id, command)
 
         # 3. Wait for readiness + inject handoff
         injected = await _inject_handoff(tmux, backend_id, prompt, timeout=60)
 
         # 4. Update history
-        cct_sid = os.environ.get("CCT_SESSION_ID", "")
-        if cct_sid:
-            _update_history(cct_sid, None)
+        if context.session_id:
+            _update_history(context.session_id, None)
 
         return RelayResult(
             old_backend_id=backend_id,
@@ -95,7 +94,7 @@ class TmuxExecutor:
         """Team lead relay: delegates to existing relay_lead function."""
         if not context.team_name:
             raise ValueError("No team_name in RelayContext for team-lead relay")
-        return await relay_lead(request, context.team_name)
+        return await relay_lead(request, context.team_name, session_id=context.session_id)
 
     async def _relay_agent(
         self,
@@ -105,7 +104,9 @@ class TmuxExecutor:
         """Teammate relay: delegates to existing relay_agent function."""
         if not context.team_name or not context.member_name:
             raise ValueError("team_name and member_name required for teammate relay")
-        return await relay_agent(request, context.team_name, context.member_name)
+        return await relay_agent(
+            request, context.team_name, context.member_name, session_id=context.session_id
+        )
 
 
 # ── Registry ──────────────────────────────────────────────

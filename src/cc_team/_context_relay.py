@@ -1,7 +1,6 @@
 """Context relay: rotate Claude Code sessions with handoff context injection.
 
-Provides three relay entry points:
-- relay_standalone: single Claude process (no team)
+Provides two relay entry points:
 - relay_lead: team lead session rotation with agent sync
 - relay_agent: teammate context relay (exit + respawn)
 
@@ -20,13 +19,12 @@ from pathlib import Path
 
 from cc_team._spawn import spawn_agent_workflow
 from cc_team._sync import sync_member_states
-from cc_team.process_manager import ProcessManager, _build_spawn_command, _find_claude_binary
+from cc_team.process_manager import ProcessManager
 from cc_team.team_manager import TeamManager
 from cc_team.tmux import ClearMode, PaneState, TmuxManager
 from cc_team.types import (
     DEFAULT_MODEL,
     TEAM_LEAD_AGENT_TYPE,
-    AgentBackend,
     SpawnAgentOptions,
     SpawnLeadOptions,
 )
@@ -64,18 +62,6 @@ def _read_handoff(path: str) -> str:
         FileNotFoundError: handoff file does not exist.
     """
     return Path(path).read_text(encoding="utf-8")
-
-
-def _format_handoff_prompt(content: str, path: str) -> str:
-    """Wrap handoff content in a relay context header with instructions."""
-    return (
-        f"[Context Relay] Handoff from previous session.\n"
-        f"Source: {path}\n"
-        f"---\n"
-        f"{content}\n"
-        f"---\n"
-        f"Continue working based on the above context."
-    )
 
 
 def _update_history(
@@ -151,51 +137,11 @@ async def _inject_handoff(
 # ── Entry points ────────────────────────────────────────
 
 
-async def relay_standalone(
-    request: RelayRequest,
-    backend: AgentBackend,
-    backend_id: str,
-    tmux: TmuxManager,
-) -> RelayResult:
-    """Context relay for a standalone Claude process (no team).
-
-    Steps:
-    1. Graceful exit old session
-    2. Build new claude command and send to same pane
-    3. Wait for readiness + inject handoff content
-    4. Update history
-    """
-    handoff_text = _read_handoff(request.handoff_path)
-    formatted = _format_handoff_prompt(handoff_text, request.handoff_path)
-
-    # 1. Graceful exit
-    await backend.graceful_exit(backend_id, timeout=request.timeout)
-
-    # 2. Build and launch new claude in the same pane
-    cli_args = [_find_claude_binary(), "--model", request.model]
-    cwd = request.cwd or os.getcwd()
-    command = _build_spawn_command(cwd, cli_args)
-    await tmux.send_command(backend_id, command)
-
-    # 3. Wait for readiness + inject handoff
-    injected = await _inject_handoff(tmux, backend_id, formatted, timeout=60)
-
-    # 4. Update history
-    cct_sid = os.environ.get("CCT_SESSION_ID", "")
-    if cct_sid:
-        _update_history(cct_sid, None)
-
-    return RelayResult(
-        old_backend_id=backend_id,
-        new_backend_id=backend_id,
-        session_id=cct_sid,
-        handoff_injected=injected,
-    )
-
-
 async def relay_lead(
     request: RelayRequest,
     team_name: str,
+    *,
+    session_id: str = "",
 ) -> RelayResult:
     """Context relay for team lead: exit + rotate session + respawn + inject handoff.
 
@@ -207,8 +153,10 @@ async def relay_lead(
     5. Sync member states
     6. Update history
     """
+    from cc_team._handoff_templates import get_relay_prompt
+
     handoff_text = _read_handoff(request.handoff_path)
-    formatted = _format_handoff_prompt(handoff_text, request.handoff_path)
+    formatted = get_relay_prompt(handoff_text, source_path=request.handoff_path)
 
     tmux = TmuxManager()
     pm = ProcessManager(tmux=tmux)
@@ -252,14 +200,13 @@ async def relay_lead(
         await sync_member_states(mgr, pm, fresh_config)
 
     # 6. Update history
-    cct_sid = os.environ.get("CCT_SESSION_ID", "")
-    if cct_sid:
-        _update_history(cct_sid, new_sid, proj=team_name)
+    if session_id:
+        _update_history(session_id, new_sid, proj=team_name)
 
     return RelayResult(
         old_backend_id=old_backend_id,
         new_backend_id=new_backend_id,
-        session_id=cct_sid,
+        session_id=session_id,
         handoff_injected=injected,
     )
 
@@ -268,6 +215,8 @@ async def relay_agent(
     request: RelayRequest,
     team_name: str,
     agent_name: str,
+    *,
+    session_id: str = "",
 ) -> RelayResult:
     """Context relay for a teammate: exit + remove + respawn with handoff.
 
@@ -277,8 +226,10 @@ async def relay_agent(
     3. Respawn via spawn_agent_workflow with handoff as prompt
     4. Update history
     """
+    from cc_team._handoff_templates import get_relay_prompt
+
     handoff_text = _read_handoff(request.handoff_path)
-    formatted = _format_handoff_prompt(handoff_text, request.handoff_path)
+    formatted = get_relay_prompt(handoff_text, source_path=request.handoff_path)
 
     tmux = TmuxManager()
     pm = ProcessManager(tmux=tmux)
@@ -321,13 +272,12 @@ async def relay_agent(
     )
 
     # 4. Update history
-    cct_sid = os.environ.get("CCT_SESSION_ID", "")
-    if cct_sid:
-        _update_history(cct_sid, None, proj=team_name)
+    if session_id:
+        _update_history(session_id, None, proj=team_name)
 
     return RelayResult(
         old_backend_id=old_backend_id,
         new_backend_id=new_backend_id,
-        session_id=cct_sid,
+        session_id=session_id,
         handoff_injected=True,  # prompt itself is the handoff
     )

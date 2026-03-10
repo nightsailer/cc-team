@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import contextlib
 import json
-import os
-import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -32,6 +30,8 @@ def write_team_marker(
     created_by: str = "cct-session-start-team",
 ) -> None:
     """Write a team marker file atomically."""
+    from cc_team._serialization import atomic_write_json
+
     path = marker_path(project_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -40,18 +40,7 @@ def write_team_marker(
         "createdAt": int(time.time() * 1000),
         "createdBy": created_by,
     }
-
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, str(path))
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
-        raise
+    atomic_write_json(path, data)
 
 
 def read_team_marker(project_dir: str | Path) -> dict[str, Any] | None:

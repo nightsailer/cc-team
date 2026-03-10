@@ -752,7 +752,7 @@ Claude Code 插件 hooks，用于自动上下文接力。
 cct _hook stop
 ```
 
-需要 `CCT_SESSION_ID` 环境变量。子 Agent 自动跳过。
+使用 hook input 中的原生 `session_id` 定位接力目录。子 Agent 自动跳过。
 
 ### Statusline Hook（`cc_team.hooks.statusline`）
 
@@ -767,7 +767,7 @@ cct _hook statusline
 
 颜色：绿色（<60%）、黄色（60-80%）、红色（>80%）。
 
-设置 `CCT_SESSION_ID` 时，将使用数据持久化到 `relay_paths()/usage.json`。
+使用 hook input 中的原生 `session_id` 将使用数据持久化到 `relay/{session_id}/usage.json`。
 
 ### 通用工具（`cc_team.hooks._common`）
 
@@ -993,20 +993,22 @@ cct --team-name <name> agent sync
 
 **输出**（JSON）：`synced`, `recovered`, `inactive`
 
-### `cct relay`
+### `cct relay`（统一接口）
 
-独立上下文接力（无团队）。需要 `CCT_SESSION_ID` 环境变量。
+统一上下文接力命令。读取 RelayContext JSON 自动判断模式（standalone/team-lead/teammate）并分派到对应执行器。
 
 ```bash
-cct relay --handoff <path> --backend-id <pane-id> [--model <model>] [--timeout <seconds>]
+cct relay --context <path-to-context.json> [--handoff <override>] [--model <model>] [--timeout <seconds>]
 ```
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `--handoff` | （必填） | 交接文件路径 |
-| `--backend-id` | （必填） | 目标 tmux pane ID |
+| `--context` | （必填） | RelayContext JSON 路径（`relay/{session_id}/context.json`） |
+| `--handoff` | — | 覆盖交接文件路径（默认从 context 目录读取） |
 | `--model` | `claude-sonnet-4-6` | 新会话的模型 |
 | `--timeout` | `30` | 退出等待超时（秒） |
+
+Stop hook 会自动调用 `cct relay --context <path>` 启动接力。
 
 ### `cct setup`
 
@@ -1022,13 +1024,23 @@ cct setup [--install]
 
 ### `cct session start`
 
-启动带 `CCT_SESSION_ID` 环境变量的新 Claude 会话。
+启动带接力环境变量的新 Claude 会话（`CCT_RELAY_MODE=standalone`）。
 
 ```bash
 cct session start [-- <claude-args>...]
 ```
 
-创建接力目录结构，并用 `claude` 替换当前进程。
+创建接力目录结构，设置 `CCT_RELAY_MODE` 环境变量，并用 `claude` 替换当前进程。
+
+### 环境变量
+
+| 变量 | 说明 |
+|------|------|
+| `CCT_RELAY_MODE` | 接力模式：`standalone`、`team-lead`、`teammate` |
+| `CCT_TEAM_NAME` | 团队名称（配合 `CCT_RELAY_MODE` 使用） |
+| `CCT_MEMBER_NAME` | 成员名称（`CCT_RELAY_MODE=teammate` 时使用） |
+| `CCT_RELAY_PROMPT_TEMPLATE` | 自定义接力注入提示模板（接收 `{content}`） |
+| `CCT_PROJECT_DATA_DIR` | 覆盖 CCT 数据目录（默认：`{project}/.claude/cct/`） |
 
 ---
 

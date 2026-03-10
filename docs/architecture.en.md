@@ -407,11 +407,12 @@ Native Claude Code `/clear`:
 
 **cct's Solution: Unified Relay**
 
-Both TL and Teammates use the same relay pattern:
+Both TL and Teammates use the same relay pattern. The unified `cct relay --context` dispatches automatically via RelayContext:
 
 ```
 ┌─────────────────────────────────────────────┐
-│  cct team relay / cct agent relay            │
+│  cct relay --context <path>                  │
+│  (or cct team relay / cct agent relay)       │
 │                                              │
 │  1. Graceful exit (/exit → poll for exit)    │
 │  2. Rotate session / Preserve identity       │

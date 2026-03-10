@@ -9,9 +9,7 @@ Usage: cct _hook statusline
 
 from __future__ import annotations
 
-import os
-
-from cc_team.hooks._common import atomic_write_json, project_dir, read_hook_input
+from cc_team.hooks._common import project_dir, read_hook_input, relay_paths, write_json
 
 
 def _fmt(n: int) -> str:
@@ -50,8 +48,8 @@ def main() -> None:
 
     # ---- persist per-session usage (always, using native session_id) ----
     proj = project_dir()
-    usage_path = os.path.join(proj, ".claude", "cct", "relay", session_id, "usage.json")
-    atomic_write_json(
+    usage_path = relay_paths(session_id, proj)["usage"]
+    write_json(
         usage_path,
         {
             "used_percentage": round(used_pct, 2),

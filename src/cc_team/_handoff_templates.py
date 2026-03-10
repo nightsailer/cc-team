@@ -2,14 +2,14 @@
 
 Provides:
 - get_handoff_template(mode): stop hook prompt template per mode
-- get_relay_prompt(context, content): builds the injection prompt for relay
+- get_relay_prompt(content): builds the injection prompt for relay
 """
 
 from __future__ import annotations
 
 import os
 
-from cc_team._relay_context import RelayContext, RelayMode
+from cc_team._relay_context import RelayMode
 
 # Default handoff templates per mode.
 # These are the prompts shown by the stop hook when asking the user to
@@ -58,13 +58,24 @@ def get_handoff_template(mode: RelayMode) -> str:
     return _TEMPLATES[mode]
 
 
-def get_relay_prompt(context: RelayContext, content: str) -> str:
+def get_relay_prompt(content: str, *, source_path: str = "") -> str:
     """Build the relay injection prompt from handoff content.
 
     Priority: CCT_RELAY_PROMPT_TEMPLATE env var > default template.
-    The template receives ``{content}`` as a format variable.
+    Uses str.replace to avoid format-string injection from handoff content.
+
+    Args:
+        content: The handoff text to embed.
+        source_path: Optional path to the handoff file (included as Source line).
     """
     template = os.environ.get("CCT_RELAY_PROMPT_TEMPLATE")
-    if template:
-        return template.format(content=content)
-    return _DEFAULT_RELAY_PROMPT.format(content=content)
+    if not template:
+        template = _DEFAULT_RELAY_PROMPT
+    result = template.replace("{content}", content)
+    if source_path:
+        # Insert source line after the header.
+        result = result.replace(
+            "[Context Relay] Handoff from previous session.\n",
+            f"[Context Relay] Handoff from previous session.\nSource: {source_path}\n",
+        )
+    return result

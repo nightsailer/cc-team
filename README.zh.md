@@ -170,10 +170,10 @@ cct --team-name my-project agent sync
 cct --team-name my-project team relay --handoff handoff.md
 cct --team-name my-project agent relay --name researcher --handoff handoff.md
 
-# 独立接力（无需团队，需要 CCT_SESSION_ID 环境变量）
-cct relay --handoff handoff.md --backend-id %42
+# 统一接力（通过 RelayContext 自动分派模式）
+cct relay --context .claude/cct/relay/<session-id>/context.json
 
-# 启动带 CCT_SESSION_ID 跟踪的 Claude 会话
+# 启动带接力环境变量的 Claude 会话
 cct session start
 
 # 安装 CCT 插件以启用 Claude Code hooks

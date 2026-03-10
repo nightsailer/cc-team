@@ -25,6 +25,7 @@ from cc_team.hooks._common import (
     project_dir,
     read_hook_input,
     read_json,
+    relay_paths,
     write_json,
 )
 
@@ -112,18 +113,18 @@ def main() -> None:
     cfg = load_config(proj)
 
     # Compute relay paths using native session_id.
-    relay_dir = os.path.join(proj, ".claude", "cct", "relay", session_id)
-    handoff_path = os.path.join(relay_dir, "handoff.md")
-    usage_path = os.path.join(relay_dir, "usage.json")
-    state_path = os.path.join(relay_dir, "state.json")
-    context_path = os.path.join(relay_dir, "context.json")
-
-    # Load RelayContext for mode information.
-    relay_ctx = RelayContext.load(context_path)
+    paths = relay_paths(session_id, proj)
+    handoff_path = paths["handoff"]
+    usage_path = paths["usage"]
+    state_path = paths["state"]
+    context_path = os.path.join(paths["dir"], "context.json")
 
     # Phase 2: handoff exists → launch relay and allow stop
     if os.path.isfile(handoff_path):
-        _launch_relay_background(context_path)
+        if os.path.isfile(context_path):
+            _launch_relay_background(context_path)
+        else:
+            _log_error(f"handoff exists but context.json missing: {context_path}")
         return
 
     # Phase 1: no handoff yet — check usage threshold
@@ -144,6 +145,9 @@ def main() -> None:
     state["triggered_pct"] = used_pct
     state["triggered_at"] = datetime.now(timezone.utc).isoformat()
     write_json(state_path, state)
+
+    # Load RelayContext only when needed (deferred from hot path).
+    relay_ctx = RelayContext.load(context_path)
 
     handoff_rel = os.path.relpath(handoff_path, proj)
     msg = _get_handoff_instructions(

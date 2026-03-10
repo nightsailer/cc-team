@@ -834,15 +834,14 @@ async def _cmd_skill(args: argparse.Namespace) -> None:
 
 
 async def _cmd_relay(args: argparse.Namespace) -> None:
-    """Context relay — unified (--context) or legacy (--handoff + --backend-id)."""
+    """Context relay — requires --context <path> to RelayContext JSON."""
     context_path = getattr(args, "context_path", None)
 
-    if context_path:
-        # Unified path: cct relay --context <path>
-        await _cmd_relay_unified(args, context_path)
-    else:
-        # Legacy path: cct relay --handoff <path> --backend-id <id>
-        await _cmd_relay_legacy(args)
+    if not context_path:
+        _error("--context is required for relay")
+        sys.exit(1)
+
+    await _cmd_relay_unified(args, context_path)
 
 
 async def _cmd_relay_unified(args: argparse.Namespace, context_path: str) -> None:
@@ -868,39 +867,6 @@ async def _cmd_relay_unified(args: argparse.Namespace, context_path: str) -> Non
     try:
         result = await executor.execute(ctx, request)
     except (FileNotFoundError, TimeoutError, ValueError) as e:
-        _error(str(e))
-        sys.exit(1)
-
-    _print_relay_result(args, result)
-
-
-async def _cmd_relay_legacy(args: argparse.Namespace) -> None:
-    """Legacy standalone relay: --handoff + --backend-id."""
-    from cc_team._context_relay import RelayRequest, relay_standalone
-    from cc_team.process_manager import ProcessManager
-    from cc_team.tmux import TmuxManager
-
-    if not getattr(args, "handoff", None):
-        _error("--handoff or --context is required for relay")
-        sys.exit(1)
-
-    if not args.backend_id:
-        _error("--backend-id is required for legacy standalone relay")
-        sys.exit(1)
-
-    request = RelayRequest(
-        handoff_path=args.handoff,
-        model=args.model,
-        timeout=args.timeout,
-        cwd=os.getcwd(),
-    )
-
-    tmux = TmuxManager()
-    pm = ProcessManager(tmux=tmux)
-
-    try:
-        result = await relay_standalone(request, pm, args.backend_id, tmux)
-    except (FileNotFoundError, TimeoutError) as e:
         _error(str(e))
         sys.exit(1)
 
@@ -1005,8 +971,9 @@ async def _cmd_setup(args: argparse.Namespace) -> None:
 
 
 def _cmd_session_start(args: argparse.Namespace) -> None:
-    """Start a new Claude session with CCT_SESSION_ID set.
+    """Start a new Claude session with relay env vars set.
 
+    Sets CCT_SESSION_ID (legacy compat) and CCT_RELAY_MODE=standalone.
     This is synchronous — os.execvpe replaces the current process.
     """
     from cc_team.hooks._common import relay_paths
@@ -1209,13 +1176,11 @@ def _build_parser() -> argparse.ArgumentParser:
     st.set_defaults(func=_cmd_status)
 
     # ── relay ──
-    rl = sub.add_parser(
-        "relay",
-        help="Context relay (unified: --context, or legacy: --handoff)",
+    rl = sub.add_parser("relay", help="Context relay via RelayContext")
+    rl.add_argument(
+        "--context", dest="context_path", required=True, help="Path to RelayContext JSON"
     )
-    rl.add_argument("--context", dest="context_path", help="Path to RelayContext JSON")
-    rl.add_argument("--handoff", help="Path to handoff file (legacy or override)")
-    rl.add_argument("--backend-id", dest="backend_id", help="Target tmux pane ID (legacy)")
+    rl.add_argument("--handoff", help="Override handoff file path (default: from context)")
     rl.add_argument("--model", default=DEFAULT_MODEL, help="Model for new session")
     rl.add_argument("--timeout", type=int, default=30, help="Exit wait timeout (seconds)")
     rl.set_defaults(func=_cmd_relay)
@@ -1230,7 +1195,7 @@ def _build_parser() -> argparse.ArgumentParser:
     sess_p.set_defaults(func=lambda _: (sess_p.print_help(), sys.exit(1)))
     sess_sub = sess_p.add_subparsers(dest="session_action")
 
-    ss = sess_sub.add_parser("start", help="Start Claude with CCT_SESSION_ID")
+    ss = sess_sub.add_parser("start", help="Start Claude with relay env vars")
     ss.add_argument(
         "claude_args",
         nargs=argparse.REMAINDER,

@@ -822,6 +822,23 @@ class AgentBackend(Protocol):
 
 ## CLI Reference (Session Management)
 
+### `cct relay` (Unified)
+
+Unified context relay command. Reads RelayContext JSON to determine mode (standalone/team-lead/teammate) and dispatches to the appropriate executor.
+
+```bash
+cct relay --context <path-to-context.json> [--handoff <path>] [--model <model>] [--timeout <seconds>]
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `--context` | (required) | Path to RelayContext JSON (`relay/{session_id}/context.json`) |
+| `--handoff` | — | Override handoff file path (default: from context directory) |
+| `--model` | `claude-sonnet-4-6` | Model for new session |
+| `--timeout` | `30` | Exit wait timeout in seconds |
+
+The stop hook launches `cct relay --context <path>` automatically.
+
 ### `cct team relay`
 
 Context relay for Team Lead: exit old TL, rotate session, spawn new TL, and auto-recover agent states.

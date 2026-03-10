@@ -66,6 +66,7 @@ def atomic_write_json(path: str, data: dict) -> None:
     except Exception:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
+        raise
 
 
 def load_config(proj: str | None = None) -> dict:
@@ -97,13 +98,13 @@ def cct_data_dir(proj: str | None = None) -> str:
     return os.path.join(proj, ".claude", "cct")
 
 
-def relay_paths(cct_session_id: str, proj: str | None = None) -> dict:
+def relay_paths(session_id: str, proj: str | None = None) -> dict:
     """Return all per-session relay file paths.
 
     Returns a dict with keys: dir, handoff, usage, history, state
-    — all under ``cct_data_dir()/relay/{cct_session_id}/``.
+    — all under ``cct_data_dir()/relay/{session_id}/``.
     """
-    base = os.path.join(cct_data_dir(proj), "relay", cct_session_id)
+    base = os.path.join(cct_data_dir(proj), "relay", session_id)
     return {
         "dir": base,
         "handoff": os.path.join(base, "handoff.md"),

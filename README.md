@@ -170,10 +170,10 @@ cct --team-name my-project agent sync
 cct --team-name my-project team relay --handoff handoff.md
 cct --team-name my-project agent relay --name researcher --handoff handoff.md
 
-# Standalone relay (no team, requires CCT_SESSION_ID env)
-cct relay --handoff handoff.md --backend-id %42
+# Unified relay (auto-dispatches via RelayContext)
+cct relay --context .claude/cct/relay/<session-id>/context.json
 
-# Start a Claude session with CCT_SESSION_ID tracking
+# Start a Claude session with relay env vars
 cct session start
 
 # Install CCT plugin for Claude Code hooks
