@@ -1266,3 +1266,67 @@ class TestAgentRelay:
         )
         with pytest.raises(SystemExit):
             await args.func(args)
+
+
+class TestUnifiedRelay:
+    """Unified cct relay --context tests."""
+
+    @pytest.mark.asyncio
+    async def test_context_missing_exits(self, tmp_path: Path) -> None:
+        """--context pointing to nonexistent file → exit(1)."""
+        parser = _build_parser()
+        args = parser.parse_args(["relay", "--context", str(tmp_path / "missing.json")])
+        args.use_json = False
+        with pytest.raises(SystemExit):
+            await args.func(args)
+
+    @pytest.mark.asyncio
+    async def test_context_dispatches_to_executor(self, tmp_path: Path) -> None:
+        """--context with valid context → dispatches to executor."""
+        from unittest.mock import AsyncMock
+
+        from cc_team._context_relay import RelayResult
+        from cc_team._relay_context import RelayContext, RelayMode
+
+        # Create context file
+        ctx = RelayContext(
+            session_id="ses-001",
+            mode=RelayMode.STANDALONE,
+            team_name=None,
+            member_name=None,
+            backend_type="tmux",
+            backend_id="%42",
+            project_dir=str(tmp_path),
+            created_at=1000,
+            created_by="test",
+        )
+        ctx_path = tmp_path / "context.json"
+        ctx.save(ctx_path)
+
+        # Create handoff
+        handoff = tmp_path / ".claude" / "cct" / "relay" / "ses-001" / "handoff.md"
+        handoff.parent.mkdir(parents=True, exist_ok=True)
+        handoff.write_text("# Test")
+
+        from unittest.mock import MagicMock
+
+        mock_executor = MagicMock()
+        mock_executor.execute = AsyncMock(
+            return_value=RelayResult(
+                old_backend_id="%42",
+                new_backend_id="%42",
+                session_id="ses-001",
+                handoff_injected=True,
+            )
+        )
+
+        parser = _build_parser()
+        args = parser.parse_args(["relay", "--context", str(ctx_path)])
+        args.use_json = False
+
+        with patch("cc_team._relay_executor.get_executor", return_value=mock_executor):
+            from cc_team.cli import _cmd_relay_unified
+
+            await _cmd_relay_unified(args, str(ctx_path))
+
+        mock_executor.execute.assert_awaited_once()

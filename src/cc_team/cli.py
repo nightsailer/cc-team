@@ -834,13 +834,58 @@ async def _cmd_skill(args: argparse.Namespace) -> None:
 
 
 async def _cmd_relay(args: argparse.Namespace) -> None:
-    """Standalone context relay: exit old process + start new with handoff."""
+    """Context relay — unified (--context) or legacy (--handoff + --backend-id)."""
+    context_path = getattr(args, "context_path", None)
+
+    if context_path:
+        # Unified path: cct relay --context <path>
+        await _cmd_relay_unified(args, context_path)
+    else:
+        # Legacy path: cct relay --handoff <path> --backend-id <id>
+        await _cmd_relay_legacy(args)
+
+
+async def _cmd_relay_unified(args: argparse.Namespace, context_path: str) -> None:
+    """Unified relay: read RelayContext, dispatch to executor."""
+    from cc_team._context_relay import RelayRequest
+    from cc_team._relay_context import RelayContext
+    from cc_team._relay_executor import get_executor
+
+    ctx = RelayContext.load(context_path)
+    if ctx is None:
+        _error(f"RelayContext not found: {context_path}")
+        sys.exit(1)
+
+    handoff = getattr(args, "handoff", None) or ctx.handoff_path
+    request = RelayRequest(
+        handoff_path=handoff,
+        model=args.model,
+        timeout=args.timeout,
+        cwd=ctx.project_dir,
+    )
+
+    executor = get_executor(ctx.backend_type)
+    try:
+        result = await executor.execute(ctx, request)
+    except (FileNotFoundError, TimeoutError, ValueError) as e:
+        _error(str(e))
+        sys.exit(1)
+
+    _print_relay_result(args, result)
+
+
+async def _cmd_relay_legacy(args: argparse.Namespace) -> None:
+    """Legacy standalone relay: --handoff + --backend-id."""
     from cc_team._context_relay import RelayRequest, relay_standalone
     from cc_team.process_manager import ProcessManager
     from cc_team.tmux import TmuxManager
 
+    if not getattr(args, "handoff", None):
+        _error("--handoff or --context is required for relay")
+        sys.exit(1)
+
     if not args.backend_id:
-        _error("--backend-id is required for standalone relay")
+        _error("--backend-id is required for legacy standalone relay")
         sys.exit(1)
 
     request = RelayRequest(
@@ -1163,13 +1208,14 @@ def _build_parser() -> argparse.ArgumentParser:
     st = sub.add_parser("status", help="Show comprehensive team status")
     st.set_defaults(func=_cmd_status)
 
-    # ── relay (standalone, no --team-name) ──
+    # ── relay ──
     rl = sub.add_parser(
         "relay",
-        help="Standalone context relay (requires CCT_SESSION_ID env)",
+        help="Context relay (unified: --context, or legacy: --handoff)",
     )
-    rl.add_argument("--handoff", required=True, help="Path to handoff file")
-    rl.add_argument("--backend-id", dest="backend_id", help="Target tmux pane ID")
+    rl.add_argument("--context", dest="context_path", help="Path to RelayContext JSON")
+    rl.add_argument("--handoff", help="Path to handoff file (legacy or override)")
+    rl.add_argument("--backend-id", dest="backend_id", help="Target tmux pane ID (legacy)")
     rl.add_argument("--model", default=DEFAULT_MODEL, help="Model for new session")
     rl.add_argument("--timeout", type=int, default=30, help="Exit wait timeout (seconds)")
     rl.set_defaults(func=_cmd_relay)
