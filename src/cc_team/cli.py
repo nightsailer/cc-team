@@ -215,9 +215,7 @@ def _build_relay_request(args: argparse.Namespace) -> RelayRequest:
     """Build a RelayRequest from CLI args (shared by all relay handoff paths)."""
     from cc_team._context_relay import RelayRequest
 
-    cct_sid = os.environ.get("CCT_SESSION_ID", str(uuid.uuid4()))
     return RelayRequest(
-        cct_session_id=cct_sid,
         handoff_path=args.handoff,
         model=getattr(args, "model", DEFAULT_MODEL),
         timeout=args.timeout,
@@ -237,7 +235,7 @@ def _print_relay_result(
         data: dict[str, object] = {
             "old_backend_id": result.old_backend_id,
             "new_backend_id": result.new_backend_id,
-            "cct_session_id": result.cct_session_id,
+            "session_id": result.session_id,
             "handoff_injected": result.handoff_injected,
         }
         if extra_json:
@@ -841,17 +839,11 @@ async def _cmd_relay(args: argparse.Namespace) -> None:
     from cc_team.process_manager import ProcessManager
     from cc_team.tmux import TmuxManager
 
-    cct_sid = os.environ.get("CCT_SESSION_ID")
-    if not cct_sid:
-        _error("CCT_SESSION_ID env var is required for relay")
-        sys.exit(1)
-
     if not args.backend_id:
         _error("--backend-id is required for standalone relay")
         sys.exit(1)
 
     request = RelayRequest(
-        cct_session_id=cct_sid,
         handoff_path=args.handoff,
         model=args.model,
         timeout=args.timeout,

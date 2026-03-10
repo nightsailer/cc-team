@@ -38,7 +38,6 @@ from cc_team.types import (
 class RelayRequest:
     """Input parameters for a context relay operation."""
 
-    cct_session_id: str
     handoff_path: str
     model: str = DEFAULT_MODEL
     timeout: int = 30
@@ -51,7 +50,7 @@ class RelayResult:
 
     old_backend_id: str | None
     new_backend_id: str
-    cct_session_id: str
+    session_id: str
     handoff_injected: bool = False
 
 
@@ -182,12 +181,14 @@ async def relay_standalone(
     injected = await _inject_handoff(tmux, backend_id, formatted, timeout=60)
 
     # 4. Update history
-    _update_history(request.cct_session_id, None)
+    cct_sid = os.environ.get("CCT_SESSION_ID", "")
+    if cct_sid:
+        _update_history(cct_sid, None)
 
     return RelayResult(
         old_backend_id=backend_id,
         new_backend_id=backend_id,
-        cct_session_id=request.cct_session_id,
+        session_id=cct_sid,
         handoff_injected=injected,
     )
 
@@ -251,12 +252,14 @@ async def relay_lead(
         await sync_member_states(mgr, pm, fresh_config)
 
     # 6. Update history
-    _update_history(request.cct_session_id, new_sid, proj=team_name)
+    cct_sid = os.environ.get("CCT_SESSION_ID", "")
+    if cct_sid:
+        _update_history(cct_sid, new_sid, proj=team_name)
 
     return RelayResult(
         old_backend_id=old_backend_id,
         new_backend_id=new_backend_id,
-        cct_session_id=request.cct_session_id,
+        session_id=cct_sid,
         handoff_injected=injected,
     )
 
@@ -318,11 +321,13 @@ async def relay_agent(
     )
 
     # 4. Update history
-    _update_history(request.cct_session_id, None, proj=team_name)
+    cct_sid = os.environ.get("CCT_SESSION_ID", "")
+    if cct_sid:
+        _update_history(cct_sid, None, proj=team_name)
 
     return RelayResult(
         old_backend_id=old_backend_id,
         new_backend_id=new_backend_id,
-        cct_session_id=request.cct_session_id,
+        session_id=cct_sid,
         handoff_injected=True,  # prompt itself is the handoff
     )

@@ -35,7 +35,6 @@ from cc_team.tmux import PaneState
 
 def _make_request(**overrides: object) -> RelayRequest:
     defaults = {
-        "cct_session_id": "cct-123",
         "handoff_path": "/tmp/handoff.md",
         "model": "claude-sonnet-4-6",
         "timeout": 10,
