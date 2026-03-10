@@ -342,10 +342,26 @@ class ProcessManager:
             raise SpawnError(f"Failed to send command to pane: {e}") from e
 
 
-def _build_spawn_command(cwd: str, cli_args: list[str]) -> str:
-    """构建 cd + env vars + CLI 命令字符串。"""
+def _build_spawn_command(
+    cwd: str,
+    cli_args: list[str],
+    *,
+    relay_env: dict[str, str] | None = None,
+) -> str:
+    """Build cd + env vars + CLI command string.
+
+    Args:
+        cwd: Working directory for the spawned process.
+        cli_args: CLI arguments to pass to the claude binary.
+        relay_env: Optional relay env vars (CCT_RELAY_MODE, CCT_TEAM_NAME, etc.)
+            to inject into the command.
+    """
     agent_cwd = shlex.quote(cwd or os.getcwd())
-    return f"cd {agent_cwd} && {_ENV_PREFIX}" + shlex.join(cli_args)
+    env_prefix = _ENV_PREFIX
+    if relay_env:
+        extra = " ".join(f"{k}={shlex.quote(v)}" for k, v in relay_env.items())
+        env_prefix += extra + " "
+    return f"cd {agent_cwd} && {env_prefix}" + shlex.join(cli_args)
 
 
 @functools.lru_cache(maxsize=1)

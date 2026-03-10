@@ -473,6 +473,42 @@ class TestBuildCliArgs:
         assert "--disallowedTools" not in args
 
 
+# ── _build_spawn_command ─────────────────────────────────────
+
+
+class TestBuildSpawnCommand:
+    """_build_spawn_command() tests."""
+
+    def test_basic_command(self) -> None:
+        """Builds basic cd + env prefix + cli args command."""
+        from cc_team.process_manager import _build_spawn_command
+
+        cmd = _build_spawn_command("/tmp", ["claude", "--model", "sonnet"])
+        assert cmd.startswith("cd /tmp && CLAUDECODE=1")
+        assert "claude --model sonnet" in cmd
+
+    def test_relay_env_vars_injected(self) -> None:
+        """Relay env vars are included in the command string."""
+        from cc_team.process_manager import _build_spawn_command
+
+        relay_env = {
+            "CCT_RELAY_MODE": "teammate",
+            "CCT_TEAM_NAME": "my-team",
+            "CCT_MEMBER_NAME": "researcher",
+        }
+        cmd = _build_spawn_command("/tmp", ["claude"], relay_env=relay_env)
+        assert "CCT_RELAY_MODE=teammate" in cmd
+        assert "CCT_TEAM_NAME=my-team" in cmd
+        assert "CCT_MEMBER_NAME=researcher" in cmd
+
+    def test_no_relay_env_is_unchanged(self) -> None:
+        """Without relay_env, command is the same as before."""
+        from cc_team.process_manager import _build_spawn_command
+
+        cmd = _build_spawn_command("/tmp", ["claude"])
+        assert "CCT_RELAY_MODE" not in cmd
+
+
 # ── _find_claude_binary ──────────────────────────────────────
 
 
