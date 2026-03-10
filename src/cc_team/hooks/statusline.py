@@ -9,11 +9,9 @@ Usage: cct _hook statusline
 
 from __future__ import annotations
 
-import json
 import os
-import sys
 
-from cc_team.hooks._common import atomic_write_json, relay_paths
+from cc_team.hooks._common import atomic_write_json, read_hook_input, relay_paths
 
 
 def _fmt(n: int) -> str:
@@ -27,12 +25,7 @@ def _fmt(n: int) -> str:
 
 def main() -> None:
     """Statusline hook entry point."""
-    raw = sys.stdin.read()
-    try:
-        data = json.loads(raw) if raw.strip() else {}
-    except json.JSONDecodeError:
-        print("\033[31m⚠ parse error\033[0m")
-        return
+    data = read_hook_input()
 
     session_id = data.get("session_id", "")
     if not session_id:

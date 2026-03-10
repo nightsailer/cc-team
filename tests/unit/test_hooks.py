@@ -36,13 +36,17 @@ def _mock_stdin(data: str = "{}") -> io.StringIO:
 class TestStopMain:
     """cc_team.hooks.stop.main() tests."""
 
+    @pytest.fixture(autouse=True)
+    def _patch_stdin(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Default stdin to empty JSON for all stop-hook tests."""
+        monkeypatch.setattr("sys.stdin", _mock_stdin())
+
     def test_no_cct_session_id_exits_silently(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """No CCT_SESSION_ID env → returns silently (no error)."""
         monkeypatch.delenv("CCT_SESSION_ID", raising=False)
-        monkeypatch.setattr("sys.stdin", _mock_stdin())
         from cc_team.hooks.stop import main
 
         # Should not raise or sys.exit
@@ -58,7 +62,6 @@ class TestStopMain:
         proj = str(tmp_path)
         monkeypatch.setenv("CCT_SESSION_ID", cct_sid)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", proj)
-        monkeypatch.setattr("sys.stdin", _mock_stdin())
 
         # Create usage.json with low usage
         from cc_team.hooks._common import relay_paths, write_json
@@ -87,7 +90,6 @@ class TestStopMain:
         proj = str(tmp_path)
         monkeypatch.setenv("CCT_SESSION_ID", cct_sid)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", proj)
-        monkeypatch.setattr("sys.stdin", _mock_stdin())
 
         from cc_team.hooks._common import relay_paths, write_json
 
@@ -116,7 +118,6 @@ class TestStopMain:
         proj = str(tmp_path)
         monkeypatch.setenv("CCT_SESSION_ID", cct_sid)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", proj)
-        monkeypatch.setattr("sys.stdin", _mock_stdin())
 
         from cc_team.hooks._common import relay_paths, write_json
 
@@ -160,7 +161,6 @@ class TestStopMain:
         proj = str(tmp_path)
         monkeypatch.setenv("CCT_SESSION_ID", cct_sid)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", proj)
-        monkeypatch.setattr("sys.stdin", _mock_stdin())
 
         from cc_team.hooks._common import relay_paths, write_json
 
@@ -214,7 +214,6 @@ class TestStopMain:
         proj = str(tmp_path)
         monkeypatch.setenv("CCT_SESSION_ID", cct_sid)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", proj)
-        monkeypatch.setattr("sys.stdin", _mock_stdin())
 
         from cc_team.hooks._common import relay_paths, write_json
 
@@ -243,7 +242,6 @@ class TestStopMain:
         proj = str(tmp_path)
         monkeypatch.setenv("CCT_SESSION_ID", cct_sid)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", proj)
-        monkeypatch.setattr("sys.stdin", _mock_stdin())
 
         from cc_team.hooks._common import read_json, relay_paths, write_json
 
@@ -301,7 +299,7 @@ class TestStatuslineMain:
         monkeypatch.setenv("CCT_PROJECT_DATA_DIR", str(tmp_path))
 
         input_data = self._make_input()
-        monkeypatch.setattr("sys.stdin", __import__("io").StringIO(input_data))
+        monkeypatch.setattr("sys.stdin", _mock_stdin(input_data))
 
         from cc_team.hooks.statusline import main
 
@@ -331,7 +329,7 @@ class TestStatuslineMain:
         monkeypatch.setenv("CCT_PROJECT_DATA_DIR", str(tmp_path))
 
         input_data = self._make_input()
-        monkeypatch.setattr("sys.stdin", __import__("io").StringIO(input_data))
+        monkeypatch.setattr("sys.stdin", _mock_stdin(input_data))
 
         from cc_team.hooks.statusline import main
 
@@ -351,7 +349,7 @@ class TestStatuslineMain:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """Empty session_id in input data → silent exit."""
-        monkeypatch.setattr("sys.stdin", __import__("io").StringIO("{}"))
+        monkeypatch.setattr("sys.stdin", _mock_stdin())
         from cc_team.hooks.statusline import main
 
         main()
@@ -362,13 +360,12 @@ class TestStatuslineMain:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """Invalid JSON input → prints error indicator."""
-        monkeypatch.setattr("sys.stdin", __import__("io").StringIO("not json"))
+        """Invalid JSON input → silent exit (no session_id in empty dict)."""
+        monkeypatch.setattr("sys.stdin", _mock_stdin("not json"))
         from cc_team.hooks.statusline import main
 
         main()
-        output = capsys.readouterr().out
-        assert "parse error" in output
+        assert capsys.readouterr().out == ""
 
 
 class TestHookCLI:
@@ -393,7 +390,7 @@ class TestHookCLI:
     ) -> None:
         """cct _hook statusline delegates to statusline.main()."""
         monkeypatch.delenv("CCT_SESSION_ID", raising=False)
-        monkeypatch.setattr("sys.stdin", __import__("io").StringIO("{}"))
+        monkeypatch.setattr("sys.stdin", _mock_stdin())
 
         from cc_team.cli import main
 

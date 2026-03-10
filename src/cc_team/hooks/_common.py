@@ -3,6 +3,7 @@
 Provides:
   - project_dir()       : CLAUDE_PROJECT_DIR with fallback
   - read_json/write_json/atomic_write_json : file I/O
+  - read_hook_input()   : parse JSON hook input from stdin
   - load_config()       : read context-relay-config.json
   - cct_data_dir()      : CCT project data directory
   - relay_paths()       : per-session relay file paths
@@ -13,9 +14,23 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import sys
 import tempfile
 
 CONFIG_REL = ".claude/hooks/context-relay-config.json"
+
+
+def read_hook_input() -> dict:
+    """Read and parse JSON hook input from stdin.
+
+    Returns an empty dict on missing or invalid input.
+    Used by stop and statusline hooks to consume Claude Code's hook payload.
+    """
+    raw = sys.stdin.read()
+    try:
+        return json.loads(raw) if raw.strip() else {}
+    except json.JSONDecodeError:
+        return {}
 
 
 def project_dir() -> str:

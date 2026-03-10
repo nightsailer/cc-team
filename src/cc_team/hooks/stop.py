@@ -12,7 +12,6 @@ Usage: cct _hook stop
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
@@ -21,6 +20,7 @@ from datetime import datetime, timezone
 from cc_team.hooks._common import (
     load_config,
     project_dir,
+    read_hook_input,
     read_json,
     relay_paths,
     write_json,
@@ -123,13 +123,8 @@ def main() -> None:
     if not cct_session_id:
         return
 
-    # Read hook input from stdin — skip if this is a subagent.
-    # agent_id is present only when the hook fires inside a subagent call.
-    raw = sys.stdin.read()
-    try:
-        hook_input = json.loads(raw) if raw.strip() else {}
-    except json.JSONDecodeError:
-        hook_input = {}
+    # Skip subagent calls — agent_id is present only in subagent hook input.
+    hook_input = read_hook_input()
     if hook_input.get("agent_id"):
         return
 
@@ -137,17 +132,14 @@ def main() -> None:
     cfg = load_config(proj)
     paths = relay_paths(cct_session_id, proj)
 
-    usage = read_json(paths["usage"])
-
-    used_pct = usage.get("used_percentage", 0)
-    handoff_exists = os.path.isfile(paths["handoff"])
-
-    # Phase 2: handoff exists → launch relay and allow stop
-    if handoff_exists:
+    # Phase 2: handoff exists → launch relay and allow stop (skip usage read)
+    if os.path.isfile(paths["handoff"]):
         _launch_relay_background(cfg, paths)
         return
 
-    # Phase 1: no handoff yet
+    # Phase 1: no handoff yet — check usage threshold
+    usage = read_json(paths["usage"])
+    used_pct = usage.get("used_percentage", 0)
     if used_pct < cfg["threshold"]:
         return
 
