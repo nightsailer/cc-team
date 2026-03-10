@@ -379,6 +379,20 @@ class TestTeamDestroy:
         assert not paths_mod.tasks_dir("test-team").exists()
 
     @pytest.mark.asyncio
+    async def test_destroy_removes_team_marker(
+        self, manager: TeamManager, isolated_home: Path, tmp_path: Path
+    ) -> None:
+        """destroy with project_dir removes team-marker.json."""
+        from cc_team._team_marker import read_team_marker, write_team_marker
+
+        await manager.create()
+        write_team_marker(tmp_path, "test-team")
+        assert read_team_marker(tmp_path) is not None
+
+        await manager.destroy(project_dir=tmp_path)
+        assert read_team_marker(tmp_path) is None
+
+    @pytest.mark.asyncio
     async def test_destroy_nonexistent_is_noop(self, manager: TeamManager) -> None:
         """销毁不存在的团队不报错。"""
         await manager.destroy()  # 不应抛出异常

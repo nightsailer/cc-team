@@ -368,7 +368,7 @@ class TeamManager:
 
     # ── 销毁 ────────────────────────────────────────────────
 
-    async def destroy(self) -> None:
+    async def destroy(self, *, project_dir: str | Path | None = None) -> None:
         """销毁团队（删除 config.json、inboxes、tasks 目录）。"""
         import shutil
 
@@ -379,3 +379,9 @@ class TeamManager:
         tasks_dir = paths.tasks_dir(self._team_name)
         if tasks_dir.exists():
             shutil.rmtree(tasks_dir)
+
+        # Clean up team marker file if project_dir is known.
+        if project_dir:
+            from cc_team._team_marker import remove_team_marker
+
+            remove_team_marker(project_dir)
