@@ -5,7 +5,7 @@ Covers stop.main():
 - Below threshold → no block
 - Above threshold, no handoff → blocks (exit 2)
 - Above threshold, with handoff → launches relay (mock Popen)
-- Subagent (agent_name set) → skip
+- Subagent (agent_id in hook input) → skip
 - Escape valve: block_count >= max_block_count → allows through
 
 Covers statusline.main():
@@ -19,12 +19,18 @@ Covers CLI _hook subcommands:
 
 from __future__ import annotations
 
+import io
 import json
 import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+
+def _mock_stdin(data: str = "{}") -> io.StringIO:
+    """Create a StringIO to mock sys.stdin for stop hook."""
+    return io.StringIO(data)
 
 
 class TestStopMain:
@@ -36,6 +42,7 @@ class TestStopMain:
     ) -> None:
         """No CCT_SESSION_ID env → returns silently (no error)."""
         monkeypatch.delenv("CCT_SESSION_ID", raising=False)
+        monkeypatch.setattr("sys.stdin", _mock_stdin())
         from cc_team.hooks.stop import main
 
         # Should not raise or sys.exit
@@ -51,12 +58,13 @@ class TestStopMain:
         proj = str(tmp_path)
         monkeypatch.setenv("CCT_SESSION_ID", cct_sid)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", proj)
+        monkeypatch.setattr("sys.stdin", _mock_stdin())
 
         # Create usage.json with low usage
         from cc_team.hooks._common import relay_paths, write_json
 
         paths = relay_paths(cct_sid, proj)
-        write_json(paths["usage"], {"used_percentage": 50, "agent_name": ""})
+        write_json(paths["usage"], {"used_percentage": 50})
 
         # Create config
         config_dir = Path(proj) / ".claude" / "hooks"
@@ -79,11 +87,12 @@ class TestStopMain:
         proj = str(tmp_path)
         monkeypatch.setenv("CCT_SESSION_ID", cct_sid)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", proj)
+        monkeypatch.setattr("sys.stdin", _mock_stdin())
 
         from cc_team.hooks._common import relay_paths, write_json
 
         paths = relay_paths(cct_sid, proj)
-        write_json(paths["usage"], {"used_percentage": 85, "agent_name": ""})
+        write_json(paths["usage"], {"used_percentage": 85})
 
         config_dir = Path(proj) / ".claude" / "hooks"
         config_dir.mkdir(parents=True, exist_ok=True)
@@ -107,11 +116,12 @@ class TestStopMain:
         proj = str(tmp_path)
         monkeypatch.setenv("CCT_SESSION_ID", cct_sid)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", proj)
+        monkeypatch.setattr("sys.stdin", _mock_stdin())
 
         from cc_team.hooks._common import relay_paths, write_json
 
         paths = relay_paths(cct_sid, proj)
-        write_json(paths["usage"], {"used_percentage": 90, "agent_name": ""})
+        write_json(paths["usage"], {"used_percentage": 90})
 
         # Create handoff.md
         os.makedirs(os.path.dirname(paths["handoff"]), exist_ok=True)
@@ -150,11 +160,12 @@ class TestStopMain:
         proj = str(tmp_path)
         monkeypatch.setenv("CCT_SESSION_ID", cct_sid)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", proj)
+        monkeypatch.setattr("sys.stdin", _mock_stdin())
 
         from cc_team.hooks._common import relay_paths, write_json
 
         paths = relay_paths(cct_sid, proj)
-        write_json(paths["usage"], {"used_percentage": 90, "agent_name": ""})
+        write_json(paths["usage"], {"used_percentage": 90})
         Path(paths["handoff"]).write_text("# Handoff")
 
         config_dir = Path(proj) / ".claude" / "hooks"
@@ -179,22 +190,15 @@ class TestStopMain:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """agent_name set in usage.json → skip (subagent), exit 0."""
+        """agent_id in hook input → skip (subagent), exit 0."""
         cct_sid = "test-session-subagent"
         proj = str(tmp_path)
         monkeypatch.setenv("CCT_SESSION_ID", cct_sid)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", proj)
 
-        from cc_team.hooks._common import relay_paths, write_json
-
-        paths = relay_paths(cct_sid, proj)
-        write_json(
-            paths["usage"],
-            {
-                "used_percentage": 95,
-                "agent_name": "worker-1",
-            },
-        )
+        # Provide hook input with agent_id (simulating subagent context)
+        hook_input = json.dumps({"agent_id": "abc123", "agent_type": "Explore"})
+        monkeypatch.setattr("sys.stdin", _mock_stdin(hook_input))
 
         from cc_team.hooks.stop import main
 
@@ -210,11 +214,12 @@ class TestStopMain:
         proj = str(tmp_path)
         monkeypatch.setenv("CCT_SESSION_ID", cct_sid)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", proj)
+        monkeypatch.setattr("sys.stdin", _mock_stdin())
 
         from cc_team.hooks._common import relay_paths, write_json
 
         paths = relay_paths(cct_sid, proj)
-        write_json(paths["usage"], {"used_percentage": 90, "agent_name": ""})
+        write_json(paths["usage"], {"used_percentage": 90})
         # Pre-set block_count at max
         write_json(paths["state"], {"block_count": 3})
 
@@ -238,11 +243,12 @@ class TestStopMain:
         proj = str(tmp_path)
         monkeypatch.setenv("CCT_SESSION_ID", cct_sid)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", proj)
+        monkeypatch.setattr("sys.stdin", _mock_stdin())
 
         from cc_team.hooks._common import read_json, relay_paths, write_json
 
         paths = relay_paths(cct_sid, proj)
-        write_json(paths["usage"], {"used_percentage": 85, "agent_name": ""})
+        write_json(paths["usage"], {"used_percentage": 85})
         write_json(paths["state"], {"block_count": 0})
 
         config_dir = Path(proj) / ".claude" / "hooks"

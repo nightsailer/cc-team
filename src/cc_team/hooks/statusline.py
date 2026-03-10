@@ -52,7 +52,8 @@ def main() -> None:
 
     model = data.get("model", {}).get("display_name", "?")
     cost = data.get("cost", {}).get("total_cost_usd", 0)
-    agent_name = data.get("agent", {}).get("name", "")
+    agent = data.get("agent", {})
+    agent_name = agent.get("name", "")
 
     # ---- persist per-session usage (only when CCT_SESSION_ID is set) ----
     cct_session_id = os.environ.get("CCT_SESSION_ID", "")

@@ -12,6 +12,7 @@ Usage: cct _hook stop
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -122,15 +123,21 @@ def main() -> None:
     if not cct_session_id:
         return
 
+    # Read hook input from stdin — skip if this is a subagent.
+    # agent_id is present only when the hook fires inside a subagent call.
+    raw = sys.stdin.read()
+    try:
+        hook_input = json.loads(raw) if raw.strip() else {}
+    except json.JSONDecodeError:
+        hook_input = {}
+    if hook_input.get("agent_id"):
+        return
+
     proj = project_dir()
     cfg = load_config(proj)
     paths = relay_paths(cct_session_id, proj)
 
-    # Read usage — skip if this is a subagent
     usage = read_json(paths["usage"])
-    agent_name = usage.get("agent_name", "")
-    if agent_name:
-        return
 
     used_pct = usage.get("used_percentage", 0)
     handoff_exists = os.path.isfile(paths["handoff"])
