@@ -867,6 +867,17 @@ async def _cmd_relay(args: argparse.Namespace) -> None:
 
 _CCT_HOOKS_CONFIG: dict[str, object] = {
     "hooks": {
+        "SessionStart": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "cct _hook session-start",
+                        "timeout": 10,
+                    }
+                ]
+            }
+        ],
         "Stop": [
             {
                 "hooks": [
@@ -877,7 +888,7 @@ _CCT_HOOKS_CONFIG: dict[str, object] = {
                     }
                 ]
             }
-        ]
+        ],
     },
     "statusLine": {
         "type": "command",
@@ -1190,6 +1201,9 @@ def _build_parser() -> argparse.ArgumentParser:
     hook_p.set_defaults(func=lambda _: (hook_p.print_help(), sys.exit(1)))
     hook_sub = hook_p.add_subparsers(dest="hook_action")
 
+    hook_ss = hook_sub.add_parser("session-start", help="SessionStart hook handler")
+    hook_ss.set_defaults(func=_cmd_hook_session_start, is_sync=True)
+
     hook_stop = hook_sub.add_parser("stop", help="Stop hook handler")
     hook_stop.set_defaults(func=_cmd_hook_stop, is_sync=True)
 
@@ -1225,6 +1239,11 @@ def _run_hook_safely(hook_module: str) -> None:
             _log_error(f"UNCAUGHT in {hook_module}:\n{traceback.format_exc()}")
         except Exception:
             pass  # Even logging failed — swallow silently
+
+
+def _cmd_hook_session_start(_args: argparse.Namespace) -> None:
+    """Delegate to cc_team.hooks.session_start.main() within the correct venv."""
+    _run_hook_safely("session_start")
 
 
 def _cmd_hook_stop(_args: argparse.Namespace) -> None:
