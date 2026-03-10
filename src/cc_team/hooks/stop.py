@@ -4,6 +4,8 @@
 Phase 1 — No handoff.md: block with handoff instructions when usage exceeds threshold.
 Phase 2 — handoff.md exists: launch relay in background, allow stop.
 
+Uses native session_id from hook input and reads RelayContext for mode selection.
+
 Safety: all exceptions are caught and logged to prevent
 "Stop hook error occurred" from disrupting agent work.
 
@@ -17,12 +19,12 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 
+from cc_team._relay_context import RelayContext, RelayMode
 from cc_team.hooks._common import (
     load_config,
     project_dir,
     read_hook_input,
     read_json,
-    relay_paths,
     write_json,
 )
 
@@ -43,69 +45,9 @@ def _log_error(msg: str) -> None:
         pass
 
 
-def _find_backend_id_tmux() -> str | None:
-    """Walk PID tree upward to find the tmux pane hosting this process.
-
-    Runs ``tmux list-panes -a`` and matches against ancestor PIDs.
-    Returns the pane_id (e.g. ``%42``) or None.
-    """
-    try:
-        raw = subprocess.check_output(
-            ["tmux", "list-panes", "-a", "-F", "#{pane_pid} #{pane_id}"],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        )
-    except (FileNotFoundError, subprocess.SubprocessError):
-        return None
-
-    # Build pid→pane_id map
-    pane_map: dict[int, str] = {}
-    for line in raw.strip().splitlines():
-        parts = line.split()
-        if len(parts) == 2:
-            try:
-                pane_map[int(parts[0])] = parts[1]
-            except ValueError:
-                continue
-
-    # Walk up the PID tree from current process
-    pid = os.getpid()
-    for _ in range(10):  # safety limit
-        if pid in pane_map:
-            return pane_map[pid]
-        if pid <= 1:
-            break
-        # Get parent PID via ps (cross-platform)
-        try:
-            ppid_str = subprocess.check_output(
-                ["ps", "-o", "ppid=", "-p", str(pid)],
-                text=True,
-                stderr=subprocess.DEVNULL,
-            ).strip()
-            pid = int(ppid_str)
-        except (subprocess.SubprocessError, ValueError):
-            break
-
-    return None
-
-
-def _launch_relay_background(cfg: dict, paths: dict) -> None:
-    """Launch ``cct relay`` or ``cct team relay`` in a detached subprocess.
-
-    For team relay: passes --handoff so relay_lead() injects context.
-    For standalone: also passes --backend-id (discovered via PID walk).
-    """
-    team_name = cfg.get("team_name", "")
-    handoff = paths["handoff"]
-
-    if team_name:
-        cmd = ["cct", "--team-name", team_name, "team", "relay", "--handoff", handoff]
-    else:
-        backend_id = _find_backend_id_tmux()
-        cmd = ["cct", "relay", "--handoff", handoff]
-        if backend_id:
-            cmd.extend(["--backend-id", backend_id])
-
+def _launch_relay_background(context_path: str) -> None:
+    """Launch unified ``cct relay --context`` in a detached subprocess."""
+    cmd = ["cct", "relay", "--context", context_path]
     try:
         subprocess.Popen(
             cmd,
@@ -117,57 +59,100 @@ def _launch_relay_background(cfg: dict, paths: dict) -> None:
         _log_error(f"Failed to launch relay: {exc}")
 
 
+def _get_handoff_instructions(
+    relay_ctx: RelayContext | None,
+    used_pct: float,
+    threshold: int,
+    block_count: int,
+    max_block_count: int,
+    handoff_rel: str,
+) -> str:
+    """Build the handoff instruction message based on mode."""
+    from cc_team._handoff_templates import get_handoff_template
+
+    mode = relay_ctx.mode if relay_ctx else RelayMode.STANDALONE
+
+    # Use per-mode template if available, with fallback to generic
+    try:
+        handoff_path_display = f"`{handoff_rel}`"
+        template = get_handoff_template(mode)
+        instructions = template.format(handoff_path=handoff_path_display)
+    except (KeyError, IndexError):
+        instructions = (
+            f"Write a handoff file to `{handoff_rel}` with sections:\n"
+            f"  - ## Current Task\n"
+            f"  - ## Completed Work\n"
+            f"  - ## Pending Work\n"
+            f"  - ## Key Context\n"
+            f"  - ## Next Steps"
+        )
+
+    return (
+        f"Context window usage at {used_pct:.1f}% (threshold {threshold}%). "
+        f"{instructions}\n"
+        f"Then tell the user to run /clear.\n"
+        f"(Block {block_count + 1}/{max_block_count})"
+    )
+
+
 def main() -> None:
     """Stop hook entry point."""
-    cct_session_id = os.environ.get("CCT_SESSION_ID", "")
-    if not cct_session_id:
-        return
+    hook_input = read_hook_input()
 
     # Skip subagent calls — agent_id is present only in subagent hook input.
-    hook_input = read_hook_input()
     if hook_input.get("agent_id"):
+        return
+
+    # Use native session_id from hook input.
+    session_id = hook_input.get("session_id", "")
+    if not session_id:
         return
 
     proj = project_dir()
     cfg = load_config(proj)
-    paths = relay_paths(cct_session_id, proj)
 
-    # Phase 2: handoff exists → launch relay and allow stop (skip usage read)
-    if os.path.isfile(paths["handoff"]):
-        _launch_relay_background(cfg, paths)
+    # Compute relay paths using native session_id.
+    relay_dir = os.path.join(proj, ".claude", "cct", "relay", session_id)
+    handoff_path = os.path.join(relay_dir, "handoff.md")
+    usage_path = os.path.join(relay_dir, "usage.json")
+    state_path = os.path.join(relay_dir, "state.json")
+    context_path = os.path.join(relay_dir, "context.json")
+
+    # Load RelayContext for mode information.
+    relay_ctx = RelayContext.load(context_path)
+
+    # Phase 2: handoff exists → launch relay and allow stop
+    if os.path.isfile(handoff_path):
+        _launch_relay_background(context_path)
         return
 
     # Phase 1: no handoff yet — check usage threshold
-    usage = read_json(paths["usage"])
+    usage = read_json(usage_path)
     used_pct = usage.get("used_percentage", 0)
     if used_pct < cfg["threshold"]:
         return
 
     # Check escape valve
-    state = read_json(paths["state"])
+    state = read_json(state_path)
     block_count = state.get("block_count", 0)
 
     if block_count >= cfg["max_block_count"]:
-        # Escape valve: allow stop after max blocks
         return
 
-    # Block with handoff instructions
+    # Block with mode-aware handoff instructions
     state["block_count"] = block_count + 1
     state["triggered_pct"] = used_pct
     state["triggered_at"] = datetime.now(timezone.utc).isoformat()
-    write_json(paths["state"], state)
+    write_json(state_path, state)
 
-    handoff_rel = os.path.relpath(paths["handoff"], proj)
-    msg = (
-        f"Context window usage at {used_pct:.1f}% (threshold {cfg['threshold']}%). "
-        f"Write a handoff file to `{handoff_rel}` with sections:\n"
-        f"  - ## Current Task\n"
-        f"  - ## Completed Work\n"
-        f"  - ## Pending Work\n"
-        f"  - ## Key Context\n"
-        f"  - ## Next Steps\n"
-        f"Then tell the user to run /clear.\n"
-        f"(Block {block_count + 1}/{cfg['max_block_count']})"
+    handoff_rel = os.path.relpath(handoff_path, proj)
+    msg = _get_handoff_instructions(
+        relay_ctx,
+        used_pct,
+        cfg["threshold"],
+        block_count,
+        cfg["max_block_count"],
+        handoff_rel,
     )
     print(msg, file=sys.stderr)
     sys.exit(2)

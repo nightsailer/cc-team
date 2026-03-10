@@ -1,16 +1,16 @@
 """Unit tests for cc_team.hooks.stop and cc_team.hooks.statusline.
 
 Covers stop.main():
-- No CCT_SESSION_ID → silent exit
+- No session_id in hook input → silent exit
 - Below threshold → no block
 - Above threshold, no handoff → blocks (exit 2)
-- Above threshold, with handoff → launches relay (mock Popen)
+- Above threshold, with handoff → launches unified relay (mock Popen)
 - Subagent (agent_id in hook input) → skip
 - Escape valve: block_count >= max_block_count → allows through
 
 Covers statusline.main():
-- With CCT_SESSION_ID: writes usage.json
-- Without CCT_SESSION_ID: render-only, no file write
+- Always writes usage.json using native session_id
+- Renders colored status bar to stdout
 
 Covers CLI _hook subcommands:
 - cct _hook stop delegates to stop.main()
@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import io
 import json
-import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -29,27 +28,37 @@ import pytest
 
 
 def _mock_stdin(data: str = "{}") -> io.StringIO:
-    """Create a StringIO to mock sys.stdin for stop hook."""
+    """Create a StringIO to mock sys.stdin for hooks."""
     return io.StringIO(data)
+
+
+def _setup_relay_dir(proj: str, session_id: str) -> Path:
+    """Create relay directory for a session and return its path."""
+    relay_dir = Path(proj) / ".claude" / "cct" / "relay" / session_id
+    relay_dir.mkdir(parents=True, exist_ok=True)
+    return relay_dir
+
+
+def _setup_config(proj: str, **overrides: object) -> None:
+    """Create context-relay-config.json with defaults."""
+    defaults = {"threshold": 80, "max_block_count": 3, "team_name": ""}
+    defaults.update(overrides)  # type: ignore[arg-type]
+    config_dir = Path(proj) / ".claude" / "hooks"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "context-relay-config.json").write_text(json.dumps(defaults))
 
 
 class TestStopMain:
     """cc_team.hooks.stop.main() tests."""
 
-    @pytest.fixture(autouse=True)
-    def _patch_stdin(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Default stdin to empty JSON for all stop-hook tests."""
-        monkeypatch.setattr("sys.stdin", _mock_stdin())
-
-    def test_no_cct_session_id_exits_silently(
+    def test_no_session_id_exits_silently(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """No CCT_SESSION_ID env → returns silently (no error)."""
-        monkeypatch.delenv("CCT_SESSION_ID", raising=False)
+        """No session_id in hook input → returns silently."""
+        monkeypatch.setattr("sys.stdin", _mock_stdin(json.dumps({})))
         from cc_team.hooks.stop import main
 
-        # Should not raise or sys.exit
         main()
 
     def test_below_threshold_no_block(
@@ -58,27 +67,22 @@ class TestStopMain:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Usage below threshold → no block, exits normally."""
-        cct_sid = "test-session-below"
+        sid = "test-session-below"
         proj = str(tmp_path)
-        monkeypatch.setenv("CCT_SESSION_ID", cct_sid)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", proj)
 
-        # Create usage.json with low usage
-        from cc_team.hooks._common import relay_paths, write_json
+        hook_input = json.dumps({"session_id": sid})
+        monkeypatch.setattr("sys.stdin", _mock_stdin(hook_input))
 
-        paths = relay_paths(cct_sid, proj)
-        write_json(paths["usage"], {"used_percentage": 50})
+        from cc_team.hooks._common import write_json
 
-        # Create config
-        config_dir = Path(proj) / ".claude" / "hooks"
-        config_dir.mkdir(parents=True, exist_ok=True)
-        (config_dir / "context-relay-config.json").write_text(
-            json.dumps({"threshold": 80, "max_block_count": 3, "team_name": ""})
-        )
+        relay_dir = _setup_relay_dir(proj, sid)
+        write_json(str(relay_dir / "usage.json"), {"used_percentage": 50})
+        _setup_config(proj)
 
         from cc_team.hooks.stop import main
 
-        main()  # Should not raise
+        main()
 
     def test_above_threshold_no_handoff_blocks(
         self,
@@ -86,21 +90,18 @@ class TestStopMain:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Usage above threshold, no handoff.md → blocks with exit(2)."""
-        cct_sid = "test-session-block"
+        sid = "test-session-block"
         proj = str(tmp_path)
-        monkeypatch.setenv("CCT_SESSION_ID", cct_sid)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", proj)
 
-        from cc_team.hooks._common import relay_paths, write_json
+        hook_input = json.dumps({"session_id": sid})
+        monkeypatch.setattr("sys.stdin", _mock_stdin(hook_input))
 
-        paths = relay_paths(cct_sid, proj)
-        write_json(paths["usage"], {"used_percentage": 85})
+        from cc_team.hooks._common import write_json
 
-        config_dir = Path(proj) / ".claude" / "hooks"
-        config_dir.mkdir(parents=True, exist_ok=True)
-        (config_dir / "context-relay-config.json").write_text(
-            json.dumps({"threshold": 80, "max_block_count": 3, "team_name": ""})
-        )
+        relay_dir = _setup_relay_dir(proj, sid)
+        write_json(str(relay_dir / "usage.json"), {"used_percentage": 85})
+        _setup_config(proj)
 
         from cc_team.hooks.stop import main
 
@@ -108,71 +109,25 @@ class TestStopMain:
             main()
         assert exc_info.value.code == 2
 
-    def test_above_threshold_with_handoff_launches_relay(
+    def test_above_threshold_with_handoff_launches_unified_relay(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Usage above threshold + handoff.md exists → launches relay, exits 0."""
-        cct_sid = "test-session-relay"
+        """Handoff.md exists → launches unified 'cct relay --context', exits 0."""
+        sid = "test-session-relay"
         proj = str(tmp_path)
-        monkeypatch.setenv("CCT_SESSION_ID", cct_sid)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", proj)
 
-        from cc_team.hooks._common import relay_paths, write_json
+        hook_input = json.dumps({"session_id": sid})
+        monkeypatch.setattr("sys.stdin", _mock_stdin(hook_input))
 
-        paths = relay_paths(cct_sid, proj)
-        write_json(paths["usage"], {"used_percentage": 90})
+        from cc_team.hooks._common import write_json
 
-        # Create handoff.md
-        os.makedirs(os.path.dirname(paths["handoff"]), exist_ok=True)
-        Path(paths["handoff"]).write_text("# Handoff content")
-
-        config_dir = Path(proj) / ".claude" / "hooks"
-        config_dir.mkdir(parents=True, exist_ok=True)
-        (config_dir / "context-relay-config.json").write_text(
-            json.dumps({"threshold": 80, "max_block_count": 3, "team_name": ""})
-        )
-
-        mock_popen = MagicMock()
-        with (
-            patch("cc_team.hooks.stop.subprocess.Popen", mock_popen),
-            patch("cc_team.hooks.stop._find_backend_id_tmux", return_value="%99"),
-        ):
-            from cc_team.hooks.stop import main
-
-            main()  # Should not raise (exits 0)
-
-        mock_popen.assert_called_once()
-        cmd = mock_popen.call_args[0][0]
-        assert cmd[:2] == ["cct", "relay"]
-        assert "--handoff" in cmd
-        assert paths["handoff"] in cmd
-        assert "--backend-id" in cmd
-        assert "%99" in cmd
-
-    def test_handoff_with_team_name_launches_team_relay(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """team_name in config → launches 'cct team relay' instead."""
-        cct_sid = "test-session-team-relay"
-        proj = str(tmp_path)
-        monkeypatch.setenv("CCT_SESSION_ID", cct_sid)
-        monkeypatch.setenv("CLAUDE_PROJECT_DIR", proj)
-
-        from cc_team.hooks._common import relay_paths, write_json
-
-        paths = relay_paths(cct_sid, proj)
-        write_json(paths["usage"], {"used_percentage": 90})
-        Path(paths["handoff"]).write_text("# Handoff")
-
-        config_dir = Path(proj) / ".claude" / "hooks"
-        config_dir.mkdir(parents=True, exist_ok=True)
-        (config_dir / "context-relay-config.json").write_text(
-            json.dumps({"threshold": 80, "max_block_count": 3, "team_name": "my-team"})
-        )
+        relay_dir = _setup_relay_dir(proj, sid)
+        write_json(str(relay_dir / "usage.json"), {"used_percentage": 90})
+        (relay_dir / "handoff.md").write_text("# Handoff content")
+        _setup_config(proj)
 
         mock_popen = MagicMock()
         with patch("cc_team.hooks.stop.subprocess.Popen", mock_popen):
@@ -180,10 +135,12 @@ class TestStopMain:
 
             main()
 
+        mock_popen.assert_called_once()
         cmd = mock_popen.call_args[0][0]
-        assert cmd[:5] == ["cct", "--team-name", "my-team", "team", "relay"]
-        assert "--handoff" in cmd
-        assert paths["handoff"] in cmd
+        assert cmd[:2] == ["cct", "relay"]
+        assert "--context" in cmd
+        context_path = str(relay_dir / "context.json")
+        assert context_path in cmd
 
     def test_subagent_skips(
         self,
@@ -191,18 +148,14 @@ class TestStopMain:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """agent_id in hook input → skip (subagent), exit 0."""
-        cct_sid = "test-session-subagent"
-        proj = str(tmp_path)
-        monkeypatch.setenv("CCT_SESSION_ID", cct_sid)
-        monkeypatch.setenv("CLAUDE_PROJECT_DIR", proj)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
 
-        # Provide hook input with agent_id (simulating subagent context)
-        hook_input = json.dumps({"agent_id": "abc123", "agent_type": "Explore"})
+        hook_input = json.dumps({"session_id": "sid", "agent_id": "abc123"})
         monkeypatch.setattr("sys.stdin", _mock_stdin(hook_input))
 
         from cc_team.hooks.stop import main
 
-        main()  # Should not raise — subagent is skipped
+        main()
 
     def test_escape_valve_allows_through(
         self,
@@ -210,27 +163,23 @@ class TestStopMain:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """block_count >= max_block_count → allows stop (escape valve)."""
-        cct_sid = "test-session-escape"
+        sid = "test-session-escape"
         proj = str(tmp_path)
-        monkeypatch.setenv("CCT_SESSION_ID", cct_sid)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", proj)
 
-        from cc_team.hooks._common import relay_paths, write_json
+        hook_input = json.dumps({"session_id": sid})
+        monkeypatch.setattr("sys.stdin", _mock_stdin(hook_input))
 
-        paths = relay_paths(cct_sid, proj)
-        write_json(paths["usage"], {"used_percentage": 90})
-        # Pre-set block_count at max
-        write_json(paths["state"], {"block_count": 3})
+        from cc_team.hooks._common import write_json
 
-        config_dir = Path(proj) / ".claude" / "hooks"
-        config_dir.mkdir(parents=True, exist_ok=True)
-        (config_dir / "context-relay-config.json").write_text(
-            json.dumps({"threshold": 80, "max_block_count": 3, "team_name": ""})
-        )
+        relay_dir = _setup_relay_dir(proj, sid)
+        write_json(str(relay_dir / "usage.json"), {"used_percentage": 90})
+        write_json(str(relay_dir / "state.json"), {"block_count": 3})
+        _setup_config(proj)
 
         from cc_team.hooks.stop import main
 
-        main()  # Should not raise — escape valve triggered
+        main()
 
     def test_block_increments_count(
         self,
@@ -238,29 +187,26 @@ class TestStopMain:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Each block increments block_count in state.json."""
-        cct_sid = "test-session-count"
+        sid = "test-session-count"
         proj = str(tmp_path)
-        monkeypatch.setenv("CCT_SESSION_ID", cct_sid)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", proj)
 
-        from cc_team.hooks._common import read_json, relay_paths, write_json
+        hook_input = json.dumps({"session_id": sid})
+        monkeypatch.setattr("sys.stdin", _mock_stdin(hook_input))
 
-        paths = relay_paths(cct_sid, proj)
-        write_json(paths["usage"], {"used_percentage": 85})
-        write_json(paths["state"], {"block_count": 0})
+        from cc_team.hooks._common import read_json, write_json
 
-        config_dir = Path(proj) / ".claude" / "hooks"
-        config_dir.mkdir(parents=True, exist_ok=True)
-        (config_dir / "context-relay-config.json").write_text(
-            json.dumps({"threshold": 80, "max_block_count": 3, "team_name": ""})
-        )
+        relay_dir = _setup_relay_dir(proj, sid)
+        write_json(str(relay_dir / "usage.json"), {"used_percentage": 85})
+        write_json(str(relay_dir / "state.json"), {"block_count": 0})
+        _setup_config(proj)
 
         from cc_team.hooks.stop import main
 
         with pytest.raises(SystemExit):
             main()
 
-        state = read_json(paths["state"])
+        state = read_json(str(relay_dir / "state.json"))
         assert state["block_count"] == 1
 
 
