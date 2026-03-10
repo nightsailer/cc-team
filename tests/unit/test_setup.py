@@ -13,7 +13,12 @@ from pathlib import Path
 
 import pytest
 
-from cc_team.cli import _CCT_HOOKS_CONFIG, _merge_hooks_into_settings, main
+from cc_team.cli import (
+    _CCT_HOOKS_CONFIG,
+    _merge_hooks_into_settings,
+    _remove_hooks_from_settings,
+    main,
+)
 
 
 class TestMergeHooksIntoSettings:
@@ -107,3 +112,127 @@ class TestSetup:
 
         output = capsys.readouterr().out
         assert "already configured" in output.lower()
+
+    def test_uninstall_removes_hooks(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """--uninstall removes CCT hooks from settings."""
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        main(["setup", "--install"])
+        main(["setup", "--uninstall"])
+
+        output = capsys.readouterr().out
+        assert "removed" in output.lower()
+
+        settings = tmp_path / ".claude" / "settings.local.json"
+        # File deleted because no other keys remained
+        assert not settings.exists()
+
+    def test_uninstall_preserves_other_keys(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """--uninstall preserves non-CCT settings."""
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        settings = tmp_path / ".claude" / "settings.local.json"
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        existing = {**_CCT_HOOKS_CONFIG, "env": {"KEY": "val"}}
+        settings.write_text(json.dumps(existing))
+
+        main(["setup", "--uninstall"])
+
+        data = json.loads(settings.read_text())
+        assert "hooks" not in data
+        assert "statusLine" not in data
+        assert data["env"] == {"KEY": "val"}
+
+    def test_uninstall_not_configured(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """--uninstall on clean project prints not found."""
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        main(["setup", "--uninstall"])
+
+        output = capsys.readouterr().out
+        assert "not found" in output.lower()
+
+    def test_uninstall_json(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """--uninstall --json returns proper status."""
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        main(["setup", "--install"])
+        capsys.readouterr()  # discard install output
+        main(["--json", "setup", "--uninstall"])
+
+        data = json.loads(capsys.readouterr().out)
+        assert data["status"] == "uninstalled"
+
+    def test_install_and_uninstall_mutually_exclusive(self) -> None:
+        """Cannot pass both --install and --uninstall."""
+        with pytest.raises(SystemExit):
+            main(["setup", "--install", "--uninstall"])
+
+
+class TestRemoveHooksFromSettings:
+    """_remove_hooks_from_settings unit tests."""
+
+    def test_no_file(self, tmp_path: Path) -> None:
+        """Returns not_configured when file does not exist."""
+        settings = tmp_path / "settings.local.json"
+        result = _remove_hooks_from_settings(settings)
+        assert result["status"] == "not_configured"
+
+    def test_removes_cct_keys(self, tmp_path: Path) -> None:
+        """Removes hooks and statusLine keys."""
+        settings = tmp_path / "settings.local.json"
+        existing = {**_CCT_HOOKS_CONFIG, "env": {"A": "1"}}
+        settings.write_text(json.dumps(existing))
+
+        result = _remove_hooks_from_settings(settings)
+        assert result["status"] == "uninstalled"
+
+        data = json.loads(settings.read_text())
+        assert "hooks" not in data
+        assert "statusLine" not in data
+        assert data["env"] == {"A": "1"}
+
+    def test_deletes_empty_file(self, tmp_path: Path) -> None:
+        """Deletes file when it becomes empty after removal."""
+        settings = tmp_path / "settings.local.json"
+        settings.write_text(json.dumps(dict(_CCT_HOOKS_CONFIG)))
+
+        result = _remove_hooks_from_settings(settings)
+        assert result["status"] == "uninstalled"
+        assert not settings.exists()
+
+    def test_not_configured(self, tmp_path: Path) -> None:
+        """Returns not_configured when no CCT hooks present."""
+        settings = tmp_path / "settings.local.json"
+        settings.write_text(json.dumps({"env": {"X": "1"}}))
+
+        result = _remove_hooks_from_settings(settings)
+        assert result["status"] == "not_configured"
+
+    def test_partial_match_removes_matched(self, tmp_path: Path) -> None:
+        """Removes only matching CCT keys (e.g. hooks match but statusLine differs)."""
+        settings = tmp_path / "settings.local.json"
+        data = {"hooks": _CCT_HOOKS_CONFIG["hooks"], "statusLine": {"custom": True}}
+        settings.write_text(json.dumps(data))
+
+        result = _remove_hooks_from_settings(settings)
+        assert result["status"] == "uninstalled"
+
+        remaining = json.loads(settings.read_text())
+        assert "hooks" not in remaining
+        assert remaining["statusLine"] == {"custom": True}

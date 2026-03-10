@@ -139,10 +139,13 @@ SKILL_SECTIONS: list[dict[str, str]] = [
         "title": "Setup Command",
         "content": (
             "cct setup\n"
-            "  Show the plugin directory path and installation instructions.\n\n"
+            "  Show installation instructions.\n\n"
             "cct setup --install\n"
-            "  Install the CCT plugin by creating a symlink at ~/.claude/plugins/cc-team.\n"
-            "  The plugin provides Stop and Statusline hooks for automatic context relay."
+            "  Install CCT hooks (SessionStart, Stop) and statusLine into\n"
+            "  .claude/settings.local.json for automatic context relay.\n\n"
+            "cct setup --uninstall\n"
+            "  Remove CCT hooks and statusLine from .claude/settings.local.json.\n"
+            "  Preserves other settings. Deletes the file if no other keys remain."
         ),
     },
     {

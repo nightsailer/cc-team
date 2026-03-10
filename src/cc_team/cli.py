@@ -928,13 +928,66 @@ def _merge_hooks_into_settings(settings_path: pathlib.Path) -> dict[str, str]:
     return {"status": "installed", "path": str(settings_path)}
 
 
-async def _cmd_setup(args: argparse.Namespace) -> None:
-    """Install CCT hooks into project settings, or show instructions."""
-    if getattr(args, "install", False):
-        proj = os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())
-        settings_path = pathlib.Path(proj) / ".claude" / "settings.local.json"
-        result = _merge_hooks_into_settings(settings_path)
+def _remove_hooks_from_settings(settings_path: pathlib.Path) -> dict[str, str]:
+    """Remove CCT hooks/statusLine from a settings JSON file.
 
+    Reads the existing file, removes the hooks and statusLine keys that
+    match CCT config, and writes back.  Other keys are preserved.
+    If the file becomes empty (only {}), it is deleted.
+
+    Returns:
+        {"status": "uninstalled"|"not_configured", "path": str(settings_path)}
+    """
+    if not settings_path.exists():
+        return {"status": "not_configured", "path": str(settings_path)}
+
+    try:
+        existing: dict[str, object] = json.loads(settings_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {"status": "not_configured", "path": str(settings_path)}
+
+    # Check if CCT hooks are present
+    has_hooks = existing.get("hooks") == _CCT_HOOKS_CONFIG["hooks"]
+    has_statusline = existing.get("statusLine") == _CCT_HOOKS_CONFIG["statusLine"]
+
+    if not has_hooks and not has_statusline:
+        return {"status": "not_configured", "path": str(settings_path)}
+
+    # Remove CCT keys
+    if has_hooks:
+        del existing["hooks"]
+    if has_statusline:
+        del existing["statusLine"]
+
+    if existing:
+        # Other keys remain — write back
+        settings_path.write_text(
+            json.dumps(existing, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+    else:
+        # File is empty — clean up
+        settings_path.unlink()
+
+    return {"status": "uninstalled", "path": str(settings_path)}
+
+
+async def _cmd_setup(args: argparse.Namespace) -> None:
+    """Install or uninstall CCT hooks in project settings."""
+    proj = os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())
+    settings_path = pathlib.Path(proj) / ".claude" / "settings.local.json"
+
+    if getattr(args, "uninstall", False):
+        result = _remove_hooks_from_settings(settings_path)
+        if args.use_json:
+            _json_out(result)
+        else:
+            if result["status"] == "not_configured":
+                print(f"CCT hooks not found in {result['path']}")
+            else:
+                print(f"CCT hooks removed from {result['path']}")
+    elif getattr(args, "install", False):
+        result = _merge_hooks_into_settings(settings_path)
         if args.use_json:
             _json_out(result)
         else:
@@ -944,12 +997,13 @@ async def _cmd_setup(args: argparse.Namespace) -> None:
                 print(f"CCT hooks installed into {result['path']}")
     else:
         if args.use_json:
-            _json_out({"hint": "Run 'cct setup --install' to configure hooks"})
+            _json_out({"hint": "Run 'cct setup --install' or 'cct setup --uninstall'"})
         else:
-            print("Install CCT hooks into project settings:")
-            print("  cct setup --install")
+            print("Manage CCT hooks in project settings:")
+            print("  cct setup --install      Install hooks + statusLine")
+            print("  cct setup --uninstall    Remove hooks + statusLine")
             print()
-            print("This adds Stop hook and statusLine to .claude/settings.local.json")
+            print("Target: .claude/settings.local.json")
 
 
 # ── session 命令 ───────────────────────────────────────────
@@ -1235,8 +1289,10 @@ def _build_parser() -> argparse.ArgumentParser:
     rl.set_defaults(func=_cmd_relay)
 
     # ── setup (no --team-name required) ─────
-    su = sub.add_parser("setup", help="Show plugin path or install symlink")
-    su.add_argument("--install", action="store_true", help="Install plugin symlink")
+    su = sub.add_parser("setup", help="Install or uninstall CCT hooks")
+    su_action = su.add_mutually_exclusive_group()
+    su_action.add_argument("--install", action="store_true", help="Install hooks + statusLine")
+    su_action.add_argument("--uninstall", action="store_true", help="Remove hooks + statusLine")
     su.set_defaults(func=_cmd_setup)
 
     # ── session ──────────────────────────────
