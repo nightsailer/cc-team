@@ -1,13 +1,17 @@
 """cc-team test fixtures.
 
-Provides path isolation, timestamp control, tmux mock, and TeamMember factory.
+Provides path isolation, timestamp control, tmux mock, TeamMember factory,
+and shared test helpers (run_session_start_hook, make_relay_request).
 """
 
 from __future__ import annotations
 
+import io
 import json
+import os
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -15,6 +19,7 @@ import cc_team._serialization as ser_mod
 import cc_team.inbox as inbox_mod
 import cc_team.paths as paths_mod
 import cc_team.team_manager as tm_mod
+from cc_team._context_relay import RelayRequest
 from cc_team.types import TeamMember
 
 # ── 路径隔离 ────────────────────────────────────────────────
@@ -105,3 +110,41 @@ def make_member(name: str = "worker-1", **overrides: Any) -> TeamMember:
     }
     defaults.update(overrides)
     return TeamMember(**defaults)
+
+
+# ── Shared test helpers ────────────────────────────────────────
+
+
+def run_session_start_hook(hook_input: dict, env: dict | None = None) -> None:
+    """Run the SessionStart hook main() with mocked stdin and optional env.
+
+    Args:
+        hook_input: JSON-serializable dict to feed as stdin.
+        env: Optional env-var overrides (patched into os.environ).
+    """
+    stdin_data = json.dumps(hook_input)
+    with patch("sys.stdin", io.StringIO(stdin_data)):
+        if env:
+            with patch.dict(os.environ, env, clear=False):
+                from cc_team.hooks.session_start import main
+
+                main()
+        else:
+            from cc_team.hooks.session_start import main
+
+            main()
+
+
+def make_relay_request(**overrides: object) -> RelayRequest:
+    """Create a RelayRequest with sensible test defaults.
+
+    Any keyword argument overrides the corresponding default field.
+    """
+    defaults: dict[str, object] = {
+        "handoff_path": "/tmp/handoff.md",
+        "model": "claude-sonnet-4-6",
+        "timeout": 10,
+        "cwd": "/workspace",
+    }
+    defaults.update(overrides)
+    return RelayRequest(**defaults)  # type: ignore[arg-type]

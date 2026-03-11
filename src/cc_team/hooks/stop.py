@@ -14,6 +14,7 @@ Usage: cct _hook stop
 
 from __future__ import annotations
 
+import functools
 import os
 import subprocess
 import sys
@@ -29,18 +30,23 @@ from cc_team.hooks._common import (
     write_json,
 )
 
-_DEBUG_LOG = os.path.join(
-    os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()),
-    "logs",
-    "context-relay-debug.log",
-)
+
+@functools.lru_cache(maxsize=1)
+def _debug_log_path() -> str:
+    """Return debug log path, evaluated lazily on first call."""
+    return os.path.join(
+        os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()),
+        "logs",
+        "context-relay-debug.log",
+    )
 
 
 def _log_error(msg: str) -> None:
     """Append error to debug log (best-effort, never raises)."""
     try:
-        os.makedirs(os.path.dirname(_DEBUG_LOG), exist_ok=True)
-        with open(_DEBUG_LOG, "a") as f:
+        log_path = _debug_log_path()
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        with open(log_path, "a") as f:
             f.write(f"[{datetime.now(timezone.utc).isoformat()}] {msg}\n")
     except Exception:
         pass

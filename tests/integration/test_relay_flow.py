@@ -21,6 +21,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from conftest import run_session_start_hook
 
 from cc_team._context_relay import RelayRequest, RelayResult
 from cc_team._handoff_templates import get_handoff_template, get_relay_prompt
@@ -302,11 +303,7 @@ class TestSessionStartTeamFlow:
 
     def _run_session_start_hook(self, hook_input: dict) -> None:
         """Helper: run the SessionStart hook with mocked stdin."""
-        stdin_data = json.dumps(hook_input)
-        with patch("sys.stdin", io.StringIO(stdin_data)):
-            from cc_team.hooks.session_start import main
-
-            main()
+        run_session_start_hook(hook_input)
 
     def test_start_team_sets_env_and_writes_marker(
         self,
@@ -444,11 +441,7 @@ class TestWorktreeSubTeammateFallback:
 
     def _run_session_start_hook(self, hook_input: dict) -> None:
         """Helper: run the SessionStart hook with mocked stdin."""
-        stdin_data = json.dumps(hook_input)
-        with patch("sys.stdin", io.StringIO(stdin_data)):
-            from cc_team.hooks.session_start import main
-
-            main()
+        run_session_start_hook(hook_input)
 
     def test_teammate_env_auto_creates_marker_for_sub_teammates(
         self,

@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import json
-import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from conftest import run_session_start_hook
 
 from cc_team._relay_context import RelayContext, RelayMode
 from cc_team._team_marker import read_team_marker, write_team_marker
@@ -18,19 +17,7 @@ class TestSessionStartHook:
 
     def _run_hook(self, hook_input: dict, env: dict | None = None) -> None:
         """Helper: run the hook main() with mocked stdin and env."""
-        import io
-
-        stdin_data = json.dumps(hook_input)
-        with patch("sys.stdin", io.StringIO(stdin_data)):
-            if env:
-                with patch.dict(os.environ, env, clear=False):
-                    from cc_team.hooks.session_start import main
-
-                    main()
-            else:
-                from cc_team.hooks.session_start import main
-
-                main()
+        run_session_start_hook(hook_input, env=env)
 
     def test_creates_standalone_context_from_env(
         self,
@@ -219,13 +206,7 @@ class TestFallbackMemberResolution:
 
     def _run_hook(self, hook_input: dict) -> None:
         """Helper: run the hook main() with mocked stdin."""
-        import io
-
-        stdin_data = json.dumps(hook_input)
-        with patch("sys.stdin", io.StringIO(stdin_data)):
-            from cc_team.hooks.session_start import main
-
-            main()
+        run_session_start_hook(hook_input)
 
     def test_marker_exists_resolves_member_by_pane_id(
         self,
@@ -331,13 +312,7 @@ class TestWorktreeMarkerAutoCreate:
 
     def _run_hook(self, hook_input: dict) -> None:
         """Helper: run the hook main() with mocked stdin."""
-        import io
-
-        stdin_data = json.dumps(hook_input)
-        with patch("sys.stdin", io.StringIO(stdin_data)):
-            from cc_team.hooks.session_start import main
-
-            main()
+        run_session_start_hook(hook_input)
 
     def test_env_team_mode_no_marker_creates_marker(
         self,

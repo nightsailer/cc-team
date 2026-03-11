@@ -2,7 +2,7 @@
 
 Provides:
   - project_dir()       : CLAUDE_PROJECT_DIR with fallback
-  - read_json/write_json/atomic_write_json : file I/O
+  - read_json/write_json : file I/O
   - read_hook_input()   : parse JSON hook input from stdin
   - load_config()       : read context-relay-config.json
   - cct_data_dir()      : CCT project data directory
@@ -11,11 +11,9 @@ Provides:
 
 from __future__ import annotations
 
-import contextlib
 import json
 import os
 import sys
-import tempfile
 
 CONFIG_REL = ".claude/hooks/context-relay-config.json"
 
@@ -52,21 +50,6 @@ def write_json(path: str, data: dict) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
-
-
-def atomic_write_json(path: str, data: dict) -> None:
-    """Write JSON atomically (tmp + rename) to avoid partial reads."""
-    dir_path = os.path.dirname(path)
-    os.makedirs(dir_path, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=dir_path, suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(data, f)
-        os.replace(tmp, path)
-    except Exception:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
-        raise
 
 
 def load_config(proj: str | None = None) -> dict:

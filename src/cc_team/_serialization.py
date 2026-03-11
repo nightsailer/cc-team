@@ -337,7 +337,7 @@ def inbox_message_from_dict(data: dict[str, Any]) -> InboxMessage:
 # ── 原子写入 ────────────────────────────────────────────────
 
 
-def atomic_write_json(path: Path, data: Any) -> None:
+def atomic_write_json(path: str | Path, data: Any) -> None:
     """原子写入 JSON 文件（temp + fsync + rename）。
 
     流程:
@@ -346,6 +346,7 @@ def atomic_write_json(path: Path, data: Any) -> None:
     3. os.replace() 原子替换（POSIX 保证）
     4. 异常时清理临时文件
     """
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
     try:

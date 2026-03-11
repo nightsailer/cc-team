@@ -248,6 +248,7 @@ async def _cmd_team_restart(args: argparse.Namespace) -> None:
 
     from cc_team._sync import sync_member_states
     from cc_team.process_manager import ProcessManager
+    from cc_team.tmux import TmuxManager
     from cc_team.types import TEAM_LEAD_AGENT_TYPE
 
     mgr, config = await _require_config(name)
@@ -268,9 +269,24 @@ async def _cmd_team_restart(args: argparse.Namespace) -> None:
     # Step 2: rotate session + spawn new TL
     new_bid, new_sid = await _spawn_new_lead(mgr, name, args.model)
 
-    # Step 3: wait for new TL init + agent state recovery
-    _TL_INIT_WAIT_SECONDS = 5
-    await asyncio.sleep(_TL_INIT_WAIT_SECONDS)
+    # Step 3: wait for new TL to be ready (poll pane alive + brief settle)
+    _TL_READY_POLL_INTERVAL = 0.5
+    _TL_READY_TIMEOUT = 15
+    _TL_SETTLE_SECONDS = 1  # brief settle after pane detected
+
+    tmux_mgr = TmuxManager()
+    deadline = asyncio.get_event_loop().time() + _TL_READY_TIMEOUT
+    while asyncio.get_event_loop().time() < deadline:
+        if await tmux_mgr.is_pane_alive(new_bid):
+            await asyncio.sleep(_TL_SETTLE_SECONDS)
+            break
+        await asyncio.sleep(_TL_READY_POLL_INTERVAL)
+    else:
+        print(
+            f"Warning: new TL pane {new_bid} not detected "
+            f"within {_TL_READY_TIMEOUT}s, proceeding anyway.",
+            file=sys.stderr,
+        )
 
     pm = ProcessManager()
     fresh_config = mgr.read()
@@ -995,6 +1011,7 @@ def _cmd_session_start_team(args: argparse.Namespace) -> None:
     from cc_team._team_marker import (
         TeamMarkerConflictError,
         check_stale_marker,
+        make_team_alive_fn,
         remove_team_marker,
         write_team_marker,
     )
@@ -1011,9 +1028,9 @@ def _cmd_session_start_team(args: argparse.Namespace) -> None:
         _error(f"Team '{team_name}' not found. Run 'cct team create --name {team_name}' first.")
         sys.exit(1)
 
-    # Check stale marker
+    # Check stale marker (pass team_alive_fn to detect active team conflicts)
     try:
-        stale = check_stale_marker(proj)
+        stale = check_stale_marker(proj, team_alive_fn=make_team_alive_fn())
         if stale:
             # Stale marker from dead team — clean up and proceed
             stale_name = stale["teamName"]

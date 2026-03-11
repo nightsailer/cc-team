@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from conftest import make_relay_request
 
 from cc_team._context_relay import RelayRequest, RelayResult
 from cc_team._relay_context import RelayContext, RelayMode
@@ -31,12 +32,7 @@ def _make_ctx(
 
 
 def _make_request(handoff_path: str = "/tmp/handoff.md") -> RelayRequest:
-    return RelayRequest(
-        handoff_path=handoff_path,
-        model="claude-sonnet-4-6",
-        timeout=10,
-        cwd="/workspace",
-    )
+    return make_relay_request(handoff_path=handoff_path)
 
 
 class TestRelayExecutorRegistry:

@@ -63,17 +63,22 @@ def _read_handoff(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
 
 
+_HISTORY_MAX_ENTRIES = 100
+
+
 def _update_history(
     session_id: str,
     new_cc_session_id: str | None,
     proj: str | None = None,
 ) -> None:
-    """Append a relay entry to history.json.
+    """Append a relay entry to history.json (capped at _HISTORY_MAX_ENTRIES).
 
     History file lives at ~/.claude/teams/{proj}/history.json if proj is given,
-    otherwise at ~/.claude/relay-history.json.
+    otherwise at ~/.claude/relay-history.json.  Uses atomic write to prevent
+    corruption on crash.
     """
     from cc_team import paths
+    from cc_team._serialization import atomic_write_json
 
     if proj:
         history_path = paths.team_dir(proj) / "history.json"
@@ -97,10 +102,11 @@ def _update_history(
         }
     )
 
-    history_path.write_text(
-        json.dumps(entries, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    # Cap history to prevent unbounded growth.
+    if len(entries) > _HISTORY_MAX_ENTRIES:
+        entries = entries[-_HISTORY_MAX_ENTRIES:]
+
+    atomic_write_json(history_path, entries)
 
 
 # ── Entry points ────────────────────────────────────────

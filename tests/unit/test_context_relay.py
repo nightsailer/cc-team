@@ -14,9 +14,9 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from conftest import make_relay_request
 
 from cc_team._context_relay import (
-    RelayRequest,
     _read_handoff,
     _update_history,
     relay_agent,
@@ -26,17 +26,6 @@ from cc_team._handoff_templates import get_relay_prompt
 from cc_team.tmux import PaneState
 
 # ── Helpers ────────────────────────────────────────────────
-
-
-def _make_request(**overrides: object) -> RelayRequest:
-    defaults = {
-        "handoff_path": "/tmp/handoff.md",
-        "model": "claude-sonnet-4-6",
-        "timeout": 10,
-        "cwd": "/workspace",
-    }
-    defaults.update(overrides)
-    return RelayRequest(**defaults)  # type: ignore[arg-type]
 
 
 def _make_mock_tmux() -> MagicMock:
@@ -131,7 +120,7 @@ class TestRelayLead:
         handoff = tmp_path / "handoff.md"
         handoff.write_text("# Lead Handoff")
 
-        request = _make_request(handoff_path=str(handoff))
+        request = make_relay_request(handoff_path=str(handoff))
 
         from cc_team.types import TEAM_LEAD_AGENT_TYPE, TeamConfig, TeamMember
 
@@ -189,7 +178,7 @@ class TestRelayLead:
         handoff = tmp_path / "handoff.md"
         handoff.write_text("# Lead Handoff Content")
 
-        request = _make_request(handoff_path=str(handoff))
+        request = make_relay_request(handoff_path=str(handoff))
 
         from cc_team.types import TEAM_LEAD_AGENT_TYPE, TeamConfig, TeamMember
 
@@ -254,7 +243,7 @@ class TestRelayAgent:
         handoff = tmp_path / "handoff.md"
         handoff.write_text("# Agent Handoff")
 
-        request = _make_request(handoff_path=str(handoff))
+        request = make_relay_request(handoff_path=str(handoff))
 
         from cc_team.types import TeamConfig, TeamMember
 

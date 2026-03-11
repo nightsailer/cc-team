@@ -9,7 +9,7 @@ Usage: cct _hook statusline
 
 from __future__ import annotations
 
-from cc_team.hooks._common import project_dir, read_hook_input, relay_paths, write_json
+from cc_team.hooks._common import project_dir, read_hook_input, read_json, relay_paths, write_json
 
 
 def _fmt(n: int) -> str:
@@ -46,19 +46,24 @@ def main() -> None:
     agent = data.get("agent", {})
     agent_name = agent.get("name", "")
 
-    # ---- persist per-session usage (always, using native session_id) ----
+    # ---- persist per-session usage (skip if unchanged) ----
     proj = project_dir()
     usage_path = relay_paths(session_id, proj)["usage"]
-    write_json(
-        usage_path,
-        {
-            "used_percentage": round(used_pct, 2),
-            "context_window_size": ctx_size,
-            "total_used_tokens": total_used,
-            "session_id": session_id,
-            "agent_name": agent_name,
-        },
-    )
+    new_pct = round(used_pct, 2)
+
+    existing = read_json(usage_path)
+    old_pct = existing.get("used_percentage", -1)
+    if abs(new_pct - old_pct) >= 1.0 or existing.get("session_id") != session_id:
+        write_json(
+            usage_path,
+            {
+                "used_percentage": new_pct,
+                "context_window_size": ctx_size,
+                "total_used_tokens": total_used,
+                "session_id": session_id,
+                "agent_name": agent_name,
+            },
+        )
 
     # ---- render status bar ----
     bar_w = 20
