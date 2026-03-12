@@ -972,6 +972,100 @@ def _remove_hooks_from_settings(settings_path: pathlib.Path) -> dict[str, str]:
     return {"status": "uninstalled", "path": str(settings_path)}
 
 
+def _check_setup_status(settings_path: pathlib.Path) -> dict[str, object]:
+    """Check current CCT setup status for the given settings file.
+
+    Returns a dict with:
+      - path: str
+      - file_exists: bool
+      - hooks_installed: bool
+      - statusline_installed: bool
+      - hooks_match: bool (True if hooks match current CCT version)
+      - statusline_match: bool
+      - status: "installed" | "outdated" | "partial" | "not_installed"
+    """
+    result: dict[str, object] = {"path": str(settings_path)}
+
+    if not settings_path.exists():
+        result.update(
+            file_exists=False,
+            hooks_installed=False,
+            statusline_installed=False,
+            hooks_match=False,
+            statusline_match=False,
+            status="not_installed",
+        )
+        return result
+
+    try:
+        existing = json.loads(settings_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        existing = {}
+
+    hooks_match = existing.get("hooks") == _CCT_HOOKS_CONFIG["hooks"]
+    statusline_match = existing.get("statusLine") == _CCT_HOOKS_CONFIG["statusLine"]
+    has_hooks = "hooks" in existing
+    has_statusline = "statusLine" in existing
+
+    if hooks_match and statusline_match:
+        status = "installed"
+    elif has_hooks or has_statusline:
+        # Has some config but doesn't match current version
+        status = "outdated" if (has_hooks and has_statusline) else "partial"
+    else:
+        status = "not_installed"
+
+    result.update(
+        file_exists=True,
+        hooks_installed=has_hooks,
+        statusline_installed=has_statusline,
+        hooks_match=hooks_match,
+        statusline_match=statusline_match,
+        status=status,
+    )
+    return result
+
+
+def _print_setup_status(status: dict[str, object]) -> None:
+    """Pretty-print setup status to stdout."""
+    path = status["path"]
+    state = status["status"]
+
+    print(f"CCT setup status ({path}):")
+    print()
+
+    if state == "installed":
+        print("  Status:     installed (up to date)")
+        print("  Hooks:      OK")
+        print("  StatusLine: OK")
+    elif state == "outdated":
+        print("  Status:     outdated (config differs from current version)")
+        print(f"  Hooks:      {'OK' if status['hooks_match'] else 'mismatch'}")
+        print(f"  StatusLine: {'OK' if status['statusline_match'] else 'mismatch'}")
+        print()
+        print("  Run 'cct setup --install' to update.")
+    elif state == "partial":
+        print("  Status:     partial")
+        hooks_label = (
+            "OK"
+            if status["hooks_match"]
+            else ("present" if status["hooks_installed"] else "missing")
+        )
+        sl_label = (
+            "OK"
+            if status["statusline_match"]
+            else ("present" if status["statusline_installed"] else "missing")
+        )
+        print(f"  Hooks:      {hooks_label}")
+        print(f"  StatusLine: {sl_label}")
+        print()
+        print("  Run 'cct setup --install' to complete installation.")
+    else:
+        print("  Status:     not installed")
+        print()
+        print("  Run 'cct setup --install' to install hooks + statusLine.")
+
+
 async def _cmd_setup(args: argparse.Namespace) -> None:
     """Install or uninstall CCT hooks in project settings."""
     proj = os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())
@@ -996,14 +1090,12 @@ async def _cmd_setup(args: argparse.Namespace) -> None:
             else:
                 print(f"CCT hooks installed into {result['path']}")
     else:
+        # No flag: show current status
+        status = _check_setup_status(settings_path)
         if args.use_json:
-            _json_out({"hint": "Run 'cct setup --install' or 'cct setup --uninstall'"})
+            _json_out(status)
         else:
-            print("Manage CCT hooks in project settings:")
-            print("  cct setup --install      Install hooks + statusLine")
-            print("  cct setup --uninstall    Remove hooks + statusLine")
-            print()
-            print("Target: .claude/settings.local.json")
+            _print_setup_status(status)
 
 
 # ── session 命令 ───────────────────────────────────────────

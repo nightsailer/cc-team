@@ -15,6 +15,7 @@ import pytest
 
 from cc_team.cli import (
     _CCT_HOOKS_CONFIG,
+    _check_setup_status,
     _merge_hooks_into_settings,
     _remove_hooks_from_settings,
     main,
@@ -66,22 +67,82 @@ class TestMergeHooksIntoSettings:
         assert data["hooks"] == _CCT_HOOKS_CONFIG["hooks"]
 
 
+class TestCheckSetupStatus:
+    """_check_setup_status unit tests."""
+
+    def test_not_installed(self, tmp_path: Path) -> None:
+        """Returns not_installed when settings file does not exist."""
+        settings = tmp_path / ".claude" / "settings.local.json"
+        result = _check_setup_status(settings)
+        assert result["status"] == "not_installed"
+        assert result["file_exists"] is False
+
+    def test_installed(self, tmp_path: Path) -> None:
+        """Returns installed when hooks and statusLine match."""
+        settings = tmp_path / "settings.local.json"
+        settings.write_text(json.dumps(dict(_CCT_HOOKS_CONFIG)))
+        result = _check_setup_status(settings)
+        assert result["status"] == "installed"
+        assert result["hooks_match"] is True
+        assert result["statusline_match"] is True
+
+    def test_outdated(self, tmp_path: Path) -> None:
+        """Returns outdated when both keys present but don't match."""
+        settings = tmp_path / "settings.local.json"
+        settings.write_text(json.dumps({"hooks": {"Old": []}, "statusLine": {"old": True}}))
+        result = _check_setup_status(settings)
+        assert result["status"] == "outdated"
+        assert result["hooks_match"] is False
+
+    def test_partial(self, tmp_path: Path) -> None:
+        """Returns partial when only one key is present."""
+        settings = tmp_path / "settings.local.json"
+        settings.write_text(json.dumps({"hooks": _CCT_HOOKS_CONFIG["hooks"]}))
+        result = _check_setup_status(settings)
+        assert result["status"] == "partial"
+        assert result["hooks_match"] is True
+        assert result["statusline_installed"] is False
+
+    def test_corrupt_json(self, tmp_path: Path) -> None:
+        """Returns not_installed on corrupt JSON."""
+        settings = tmp_path / "settings.local.json"
+        settings.write_text("not json")
+        result = _check_setup_status(settings)
+        assert result["status"] == "not_installed"
+        assert result["file_exists"] is True
+
+
 class TestSetup:
     """cct setup CLI tests."""
 
-    def test_prints_instructions(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """Default mode prints install instructions."""
+    def test_default_shows_status(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Default mode (no flags) shows current setup status."""
         main(["setup"])
 
         output = capsys.readouterr().out
-        assert "cct setup --install" in output
+        assert "status" in output.lower()
 
-    def test_prints_instructions_json(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """JSON mode returns hint."""
+    def test_default_json_shows_status(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """JSON mode returns status object."""
         main(["--json", "setup"])
 
         data = json.loads(capsys.readouterr().out)
-        assert "hint" in data
+        assert "status" in data
+
+    def test_default_installed_shows_ok(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Default mode shows 'up to date' when hooks are installed."""
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        main(["setup", "--install"])
+        capsys.readouterr()  # discard install output
+
+        main(["setup"])
+        output = capsys.readouterr().out
+        assert "up to date" in output.lower()
 
     def test_install_writes_settings(
         self,
